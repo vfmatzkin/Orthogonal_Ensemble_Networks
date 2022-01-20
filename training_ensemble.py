@@ -1,9 +1,11 @@
+import os
 from configparser import ConfigParser
 from glob import glob
 
 from ResUNet_model import build_network
 from utils import *
 
+os.chdir(os.path.dirname(os.path.realpath(__file__)))  # Change working dir
 parser = ConfigParser()
 parser.read('config_file.ini')
 
