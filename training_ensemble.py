@@ -162,6 +162,10 @@ def train_unet(model_fold, model_name, n=None, self_p=0, inter_p=0,
     summary_writer = tf.summary.create_file_writer(
         os.path.join(logs_directory, model_fold, model_name))
 
+    model_folder = os.path.join(models_directory, model_fold)
+    os.makedirs(model_folder, exist_ok=True)
+    print(f"Model will be saved in: {model_folder}.")
+
     if ensemble == 'inter-orthogonal':
         reference_weights = list()
         for i in range(n):
@@ -169,6 +173,9 @@ def train_unet(model_fold, model_name, n=None, self_p=0, inter_p=0,
             model_ref = load_model(
                 os.path.join(models_directory, model_fold, model_ref_name))
             reference_weights.append(model_ref)
+
+    best_loss_val_value = None
+    best_loss_val_epoch = 0
 
     for epoch in range(1, epochs):
         print('--- Epoch  ', epoch, ' /', epochs)
@@ -193,6 +200,18 @@ def train_unet(model_fold, model_name, n=None, self_p=0, inter_p=0,
                 loss, dc = val_on_batch(val_data)
                 val_loss.append(loss)
                 mean_dice.append(dc)
+            avg_val_loss = np.mean(val_loss)
+            if epoch == 1 or (epoch > 1 and avg_val_loss < best_loss_val_value):
+                best_loss_val_epoch = epoch
+                best_loss_val_value = avg_val_loss
+
+                print(f'New best model found (val loss: {best_loss_val_value})')
+                print('Saving model: '.format(os.path.join(models_directory,
+                                                           model_fold,
+                                                           model_name)))
+                ep_m_name = model_name + f'_ep{best_loss_val_epoch}'
+                save_model(unet, os.path.join(models_directory, model_fold,
+                                              ep_m_name))
 
             with summary_writer.as_default():
                 tf.summary.scalar('trainining_loss', np.mean(cum_loss),
@@ -216,8 +235,10 @@ def train_unet(model_fold, model_name, n=None, self_p=0, inter_p=0,
         if epoch % 10 == 0:
             optimizer.learning_rate.assign(optimizer.learning_rate * lrd)
 
-    os.makedirs(os.path.join(models_directory, model_fold), exist_ok=True)
+    print('Saving model: '.format(os.path.join(models_directory, model_fold,
+                                               model_name)))
     save_model(unet, os.path.join(models_directory, model_fold, model_name))
+    print(f'Best model: epoch {best_loss_val_epoch}, loss {best_loss_val_value}')
 
     del unet
     del optimizer
@@ -240,7 +261,6 @@ if __name__ == "__main__":
     n_models = parser["ENSEMBLE"].getint("n_models")
     network = parser["ENSEMBLE"].get("network")
 
-
     if ensemble == 'random':
         model_fold = 'wmh_' + network + '_random'
         for model in range(n_models):
@@ -253,7 +273,8 @@ if __name__ == "__main__":
             self_p)
         for model in range(n_models):
             model_name = 'model_{}'.format(model)
-            train_unet(model_fold, model_name, n=model, self_p=self_p, n_classes=n_classes)
+            train_unet(model_fold, model_name, n=model, self_p=self_p,
+                       n_classes=n_classes)
 
     elif ensemble == 'inter-orthogonal':
         self_p = parser["ENSEMBLE"].getfloat("self_p")
