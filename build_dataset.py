@@ -1,3 +1,12 @@
+import os
+import random
+import sys
+from typing import Tuple
+
+import click
+import numpy as np
+from nibabel import load as load_nii
+
 description = """build_dataset
 
 This tool helps in converting several datasets (see below for available datase-
@@ -17,16 +26,6 @@ IMPORTANT: Images in [SOURCE_DIR] must be organized in the following way:
 
 """
 
-import click
-import os
-import random
-import sys
-from pdb import set_trace as st
-from random import randint
-
-import numpy as np
-from nibabel import load as load_nii
-
 DATASET_NAMES = ['Ultrecht', 'Amsterdam', 'Singapore', 'miccaibrats',
                  'hepaticvessel']
 avail = f"""Available datasets are: {', '.join(DATASET_NAMES)}."""
@@ -41,6 +40,51 @@ SUFFIXES = {'miccaibrats':
                  'labels': ['_seg.nii.gz']},
             }
 
+
+class Normalization:
+    def __init__(self, method, background_value=None):
+        if method == "z_scores":
+            self.takes_mask = False
+            self.method = z_scores_normalization
+
+        elif method == "mask_filter_and_z_scores":
+            assert background_value is not None
+            self.takes_mask = True
+            self.method = mask_filter_and_z_scores(background_value)
+
+        elif method == "min_max":
+            self.takes_mask = False
+            self.method = min_max_normalization
+
+        else:
+            raise RuntimeError("Unknown normalization method.")
+
+
+class Dataset:
+    """ Dataset class used per storing used file/folder paths
+
+    :param name: Dataset name. Must be one of the ones listed in DATASET_NAMES
+    :param origin_dir: Soruce folder (contains subfolders with the images
+    inside).
+    :param patches_dir: Output folder (it can be inside the source folder).
+    """
+
+    def __init__(self, name=None, origin_dir=None, patches_dir=None):
+        assert name in DATASET_NAMES
+        assert origin_dir is not None or patches_dir is not None
+
+        self.name = name
+        self.origin_directory = origin_dir
+        self.patches_directory = patches_dir
+
+        # List the folders, but exclude the out folder if it's inside
+        cond = lambda fi: os.path.join(origin_dir, fi) == patches_dir
+        self.image_files = [f for f in os.listdir(origin_dir) if not cond(f)]
+
+        self.n_images = len(self.image_files)
+
+
+# Augmentation-preprocessing-matrix handling functions (not all were used yet)
 
 def add_padding(img, depth_with_padding):
     pad_z = depth_with_padding
@@ -80,113 +124,62 @@ def min_max_normalization(img):
     return img
 
 
-class Normalization:
-    def __init__(self, method, background_value=None):
-        if method == "z_scores":
-            self.takes_mask = False
-            self.method = z_scores_normalization
+def unsqueeze_and_concat_at_end(imgs: list):
+    """ Unsqueeze images and concatenate at the end.
 
-        elif method == "mask_filter_and_z_scores":
-            assert background_value is not None
-            self.takes_mask = True
-            self.method = mask_filter_and_z_scores(background_value)
+    Given a list of images, expand each image in the last dimension and then
+    concatenate these images in the added dimension
 
-        elif method == "min_max":
-            self.takes_mask = False
-            self.method = min_max_normalization
-
-        else:
-            raise RuntimeError("Unknown normalization method.")
+    :param imgs: List of 3D images.
+    :return: Concatenated images.
+    """
+    # For each modality image patch, create a separate dimension
+    imgs = [np.expand_dims(d, len(d.shape)) for d in imgs]
+    # Concatenate in the new dimension
+    imgs = np.concatenate(imgs, len(imgs[0].shape) - 1)
+    return imgs
 
 
-class Dataset:
-    def __init__(self, name=None, origin_dir=None, patches_dir=None):
-        assert name in DATASET_NAMES
-        assert origin_dir is not None or patches_dir is not None
-
-        self.name = name
-        self.origin_directory = origin_dir
-        self.patches_directory = patches_dir
-
-        # List the folders, but exclude the out folder if it's inside
-        cond = lambda fi: os.path.join(origin_dir, fi) == patches_dir
-        self.image_files = [f for f in os.listdir(origin_dir) if not cond(f)]
-
-        self.n_images = len(self.image_files)
+# Unused funcs
 
 
-def print_parameters(num_of_archives, num_images_per_archive,
-                     num_class1_patches, num_class2_patches,
-                     num_class4_patches, num_negative_patches):
-    print("Saving to compressed npz files...")
-    print("Parameters:")
-    print(f"  > NUM_OF_ARCHIVES = {num_of_archives}")
-    print(f"  > NUM_IMAGES_PER_ARCHIVE = {num_images_per_archive}")
-    print(f"  > NUM_CLASS1_PATCHES = {num_class1_patches}")
-    print(f"  > NUM_CLASS2_PATCHES = {num_class2_patches}")
-    print(f"  > NUM_CLASS4_PATCHES = {num_class4_patches}")
-    print(f"  > NUM_NEGATIVE_PATCHES = {num_negative_patches}")
+def get_prediction_labels(prediction):
+    n_samples = prediction.shape[0]
+    label_arrays = []
+
+    for sample_number in range(n_samples):
+        label_data = np.argmax(prediction[sample_number], axis=0)
+        label_data[label_data == 3] = 4
+        label_arrays.append(np.array(label_data, dtype=np.uint8))
+    return label_arrays
 
 
-def generate_patch_4_classes(elem):
-    class1_patches_single_image, class2_patches_single_image, \
-    class4_patches_single_image, negative_patches_single_image = [], [], [], []
-    flair = elem["flair"]
-    t1 = elem["t1"]
-    t2 = elem["t2"]
-    t1ce = elem["t1ce"]
-    labels = elem["labels"]
+def get_one_hot_prediction(y_pred):
+    hard_y_pred = np.copy(y_pred)
 
-    assert t1.shape == flair.shape
-    assert t1.shape == labels.shape
-    assert t1.shape == t2.shape
-    assert t1.shape == t1ce.shape
-    print('------------------------------------Dentro del generate 4 '
-          f'classes--- Label shape: {labels.shape}')
-    for k in range(16, labels.shape[2] - 16, 3):
-        # k is the number of image----> Agos: k no es el numero de imagenes,
-        # sino la tercera dimensión
-        for i in range(16, labels.shape[0] - 16, 4):
-            for j in range(16, labels.shape[1] - 16, 4):
-                # (i,j) is the center
+    label_data = np.argmax(y_pred, axis=4)
 
-                new_patch_labels = labels[i - 16:i + 16, j - 16:j + 16,
-                                   k - 16:k + 16]
-                new_patch_flair = flair[i - 16:i + 16, j - 16:j + 16,
-                                  k - 16:k + 16]
-                new_patch_t1 = t1[i - 16:i + 16, j - 16:j + 16, k - 16:k + 16]
-                new_patch_t2 = t2[i - 16:i + 16, j - 16:j + 16, k - 16:k + 16]
-                new_patch_t1ce = t1ce[i - 16:i + 16, j - 16:j + 16,
-                                 k - 16:k + 16]
+    for i in range(4):
+        hard_y_pred[:, :, :, :, i][label_data[:, :, :, :] == i] = 1
+        hard_y_pred[:, :, :, :, i][label_data[:, :, :, :] != i] = 0
 
-                if labels[i][j][k] == 1.0:
-                    class1_patches_single_image.append(
-                        [new_patch_t1, new_patch_t1ce, new_patch_t2,
-                         new_patch_flair, new_patch_labels])
-
-                elif labels[i][j][k] == 2.0:
-                    class2_patches_single_image.append(
-                        [new_patch_t1, new_patch_t1ce, new_patch_t2,
-                         new_patch_flair, new_patch_labels])
-                elif labels[i][j][k] == 4.0:
-                    class4_patches_single_image.append(
-                        [new_patch_t1, new_patch_t1ce, new_patch_t2,
-                         new_patch_flair, new_patch_labels])
-                else:
-                    negative_patches_single_image.append(
-                        [new_patch_t1, new_patch_t1ce, new_patch_t2,
-                         new_patch_flair, new_patch_labels])
-    return class1_patches_single_image, class2_patches_single_image, \
-           class4_patches_single_image, negative_patches_single_image
+    return hard_y_pred
 
 
-def generate_patch_4_classes_ref(imgs, patch_size=32, label_id='_seg.nii.gz'):
-    """  Extract im_ptchs of the supplied images according to the labels.
+# Patch generation functions
 
-    :param imgs:
-    :param patch_size:
-    :param label_id:
-    :return:
+def generate_patches(imgs: dict, patch_size: int = 32,
+                     label_id: str = '_seg.nii.gz') -> Tuple[dict, dict]:
+    """  Extract patches of the supplied images according to the labels.
+
+    :param imgs: Opened images of a patient. It is a dictionary containing the
+    file ID (with extension) as keys and the numpy arrays corresponding to the
+    3D image.
+    :param patch_size: Size of the patches.
+    :param label_id: Key used for identifying the label image that will be used
+    for checking the class of the central pixel for each patch.
+    :return: It returns images and labels dictionaries with classes as keys and
+    lists of patches as values.
     """
     ps = patch_size // 2  # 32 --> 16
     if not label_id:
@@ -222,7 +215,16 @@ def generate_patch_4_classes_ref(imgs, patch_size=32, label_id='_seg.nii.gz'):
     return ptch_by_cls_imgs, ptch_by_cls_lbls
 
 
-def write_files_metadata(dataset, train_paths, val_paths, hold_out_paths):
+def write_files_metadata(dataset: Dataset, train_paths: list, val_paths: list,
+                         hold_out_paths: list):
+    """ Dump metadata into txt files.
+
+    :param dataset: Dataset containing the paths of the openes files/folders.
+    :param train_paths: Files used in the train split.
+    :param val_paths: Files used in the validation split.
+    :param hold_out_paths: Files used in the hold_out split.
+    :return:
+    """
     print('-------> Writing files to metadata:............................. ')
     metadata_file = os.path.join(dataset.patches_directory,
                                  "metadata_files.txt")
@@ -239,132 +241,26 @@ def write_files_metadata(dataset, train_paths, val_paths, hold_out_paths):
     f.close()
 
 
-def generate_npz_files(class1_patches, class2_patches, class4_patches,
-                       negative_patches, num_images_per_archive, full_dirname,
-                       num_of_archives=None):
-    # This function generates npz files from positive and negative im_ptchs
-    # We could flip the im_ptchs on the edge Y if necessary for augmentation -
-    # but gets too noisy
-    if num_of_archives is None:
-        num_of_archives = 0  # total number of archives generated
-    num_of_archive = num_of_archives - 1  # number of each archive
-    print('Estoy generando archivos npz y el numero de archivos es: ',
-          num_of_archive)
-    # ===== We generate npz files until we have no more im_ptchs
-    while 1:
-        num_of_archive += 1
-        t1_flair_list, labels_list = [], []
-        for num_image in range(num_images_per_archive):
+def generate_npz_files(im_ptchs: dict, lbl_ptchs: dict, full_dirname: str,
+                       images_per_file: int, drop_last: bool = True,
+                       class_probs: list = None, n_file: int = 0,
+                       met_no: int = 0) -> Tuple[int, int]:
+    """ Generate npz files form images and labels dictionaries.
 
-            # --Damos un 25% de posibilidades a que el voxel central pertenezca
-            # a cada una de las 4 clases
-            rand = randint(0, 100)
-            if rand <= 25:
-                if len(class1_patches) == 0:
-                    print(
-                        'Dejo de archivar porque me quede sin archivos de '
-                        'clase 1.')
-                    # No more positive im_ptchs, dataset is done
-                    return num_of_archives
-                data = class1_patches.pop()
-            elif 25 < rand <= 50:
-                if len(class2_patches) == 0:
-                    # No more positive im_ptchs, dataset is done
-                    print('Dejo de archivar porque me quede sin archivos de '
-                          'clase 2.')
-                    return num_of_archives
-                data = class2_patches.pop()
-            elif 50 < rand <= 75:
-                if len(class4_patches) == 0:
-                    print(
-                        'Dejo de archivar porque me quede sin archivos de '
-                        'clase 4')
-                    # No more positive im_ptchs, dataset is done
-                    return num_of_archives
-                data = class4_patches.pop()
-            else:
-                if len(negative_patches) == 0:
-                    # No more negative im_ptchs, dataset is done
-                    print(
-                        'Dejo de archivar porque me quede sin archivos de '
-                        'clase 0')
-                    return num_of_archives
-                data = negative_patches.pop()
-            try:
-                t1, t1ce, t2, flair, labels = data
-                # ===== we mix t1 and flair
-                new_shape_t1_flair_joined = (
-                    4, t1.shape[0], t1.shape[1], t1.shape[2])
-                t1_flair_joined = np.empty(new_shape_t1_flair_joined)
-                t1_flair_joined[0] = t1
-                t1_flair_joined[1] = t1ce
-                t1_flair_joined[2] = t2
-                t1_flair_joined[3] = flair
-
-                # we swap the axes (4,32,32,32) => (32,4,32,32) =>
-                # (32,32,4,32) => (32,32,32,4)
-                t1_flair_joined = np.swapaxes(
-                    np.swapaxes(np.swapaxes(t1_flair_joined, 0, 1), 1, 2), 2,
-                    3)
-
-                # ===== we produce one label matrix, which is the probability
-                # of WMH.
-                new_shape_one_labels = (
-                    1, labels.shape[0], labels.shape[1], labels.shape[2])
-                one_label_joined = np.empty(new_shape_one_labels)
-                one_label_joined[0] = labels  # probability of WMH
-
-                # ===== we swap the axes (1,32,32,32) => (32,1,32,32) =>
-                # (32,32,1,32) => (32,32,32,1)
-                one_label_joined = np.swapaxes(
-                    np.swapaxes(np.swapaxes(one_label_joined, 0, 1), 1, 2), 2,
-                    3)
-
-                # ===== we append them
-                t1_flair_list.append(t1_flair_joined)
-                labels_list.append(one_label_joined)
-
-            except:
-                raise RuntimeError(f"Image broken {data}")
-
-        print('-------------------------------------sali del for')
-        t1_flair_list = np.array(t1_flair_list, dtype=np.float32)
-        labels_list = np.array(labels_list, dtype=np.float32)
-        print('labels_list centers: ', labels_list[:, 16, 16, 16, 0])
-        assert t1_flair_list.shape == (1024, 32, 32, 32, 4)
-
-        # ==== Saving the file
-        outfile = os.path.join(full_dirname,
-                               f"archive_number_{num_of_archive}.npz")
-        os.makedirs(os.path.dirname(outfile), exist_ok=True)
-        np.savez_compressed(outfile, t1_flair=t1_flair_list,
-                            labels=labels_list)
-        print(outfile)
-        num_of_archives += 1
-
-        return num_of_archives
-
-
-def unsqueeze_and_concat_at_end(imgs):
-    # For each modality image patch, create a separate dimension
-    imgs = [np.expand_dims(d, len(d.shape)) for d in imgs]
-    # Concatenate in the new dimension
-    imgs = np.concatenate(imgs, len(imgs[0].shape) - 1)
-    return imgs
-
-
-def generate_npz_files_ref(im_ptchs, lbl_ptchs, images_per_file,
-                           full_dirname, class_probs=None,
-                           dataset='miccaibrats', n_file=0):
-    """ Generate npz files form im_patches dictionary
-
-    :param im_ptchs:
-    :param lbl_ptchs:
-    :param images_per_file:
-    :param full_dirname:
-    :param class_probs:
-    :param n_file:
-    :return:
+    :param im_ptchs: images dict with classes as keys and lists of patches as
+    values.
+    :param lbl_ptchs: labels dict with classes as keys and lists of patches as
+    values.
+    :param full_dirname: Out folder path
+    :param images_per_file: Max amount of images per npz file.
+    :param drop_last: If the last file contains less than images_per_file
+    patches, don't save them.
+    :param class_probs: Probability of adding a certain class patch for each
+    class. If not provided, it will assign the same probability to each class.
+    :param n_file: Amount of files saved so far. Used in the saved file path.
+    :param met_no: Number of actual images saved, written in metadata.txt file
+    and calculated as n_files x images_per_file.
+    :return: Amount of saved images.
     """
     arg_classes = im_ptchs.keys()  # Classes in the provided dictionary
     if class_probs is None:
@@ -377,17 +273,16 @@ def generate_npz_files_ref(im_ptchs, lbl_ptchs, images_per_file,
                                  f"in the images ({', '.join(arg_classes)}).")
 
     print('Estoy generando archivos npz...')
-    # Get smallest class
+    # Get smallest class (make sure we have at least one of each to continue).
     c, v = min([(k, len(l)) for k, l in im_ptchs.items()], key=lambda t: t[1])
     if v == 0:
         print(f'No patches for class {c}. Cannot continue')
-        return 0
+        return n_file, met_no
     else:
         print(f'Smallest amount of im_ptchs found in class {c} ({v} im_ptchs)')
         there_are_imgs = True
 
     while there_are_imgs:
-        n_file += 1
         images_list, labels_list = [], []
         for image_n in range(images_per_file):
             # Pick a class accordingly
@@ -410,258 +305,56 @@ def generate_npz_files_ref(im_ptchs, lbl_ptchs, images_per_file,
         print('labels_list centers: ', labels_list[:, 16, 16, 16, 0])
 
         if labels_list.shape[0] < images_per_file:
-            print(f"WARNING: saved image with {labels_list.shape[0]} images (less "
-                  f"than the images_per_file parameter ({images_per_file}).")
+            if drop_last:
+                print(f"Dropping {labels_list.shape[0]} images due to they are"
+                      f" less than {images_per_file}.")
+                return n_file, met_no
+            print(f"WARNING: saved image with {labels_list.shape[0]} images "
+                  f"(less than the ims_file parameter ({images_per_file}).")
             # In the previous version, it won't save the imgs. This can be
             # counterproductive in small datasets (<1024 patches of a class).
 
+        n_file += 1
+        met_no += labels_list.shape[0]
         # ==== Saving the file
         outfile = os.path.join(full_dirname, f"archive_number_{n_file}.npz")
         os.makedirs(os.path.dirname(outfile), exist_ok=True)
         np.savez_compressed(outfile, images=images_list, labels=labels_list)
         print(outfile)
 
-    return n_file
+    return n_file, met_no
 
 
-def generate_dataset_3d(path, files_paths, patches_dir, metadata_dir,
-                        subdirname, normalization, boxcox_lambda, flipping,
-                        fixed_range, depth_crop, shape_with_padding,
-                        mask_filtering):
-    full_dirname = os.path.join(patches_dir, subdirname)
-    print('full_dirname: ', full_dirname)
-    if os.path.exists(full_dirname):
-        raise RuntimeError(f'{full_dirname} already exists! Delete it if you '
-                           f'want to regenerate archives.')
+def generate_dataset_3d(path: str, folders_pati: list, patches_dir: str,
+                        metadata_fil: str, subdirname: str,
+                        normalization: bool, flipping: bool, fixed_range: list,
+                        depth_crop: list, shape_with_padding: int,
+                        dataset: str = 'miccaibrats',
+                        images_per_file: int = 1024, batch_size: int = 20):
+    """ Generate 3D dataset
 
-    one_element = {}
-    elem_number = 0
-    class1_patches = []
-    class2_patches = []
-    class4_patches = []
-    negative_patches = []
-    num_of_archives = 0
-    for file_path in files_paths:
-        num_class1_patches = len(class1_patches)
-        num_class2_patches = len(class2_patches)
-        num_class4_patches = len(class4_patches)
-        num_negative_patches = len(negative_patches)
+    Given a set of images, convert them from .nii.gz to numpy array patches,
+    saved as .npz files.
 
-        print(f"> NUM POSITIVE CLASS1: {num_class1_patches}")
-        print(f"> NUM POSITIVE CLASS2: {num_class2_patches}")
-        print(f"> NUM POSITIVE CLASS4: {num_class4_patches}")
-        print(f"> NUM NEGATIVE PATCHES: {num_negative_patches}")
-
-        # ===== We generate the im_ptchs from the loaded data ----- NUEVO I
-        if elem_number == 30:
-            print("Generating im_ptchs...")
-            class1_patches = []
-            class2_patches = []
-            class4_patches = []
-            negative_patches = []
-            elem_number = 0
-        # ===== We generate the im_ptchs from the loaded data ----- NUEVO F
-
-        print('------>',
-              os.path.join(path, file_path, file_path + '_flair.nii.gz'))
-        flair_nii_gz = load_nii(
-            os.path.join(path, file_path,
-                         file_path + '_flair.nii.gz')).get_data()
-
-        t1_nii_gz = load_nii(
-            os.path.join(path, file_path, file_path + '_t1.nii.gz')).get_data()
-
-        t1ce_nii_gz = load_nii(
-            os.path.join(path, file_path,
-                         file_path + '_t1ce.nii.gz')).get_data()
-
-        t2_nii_gz = load_nii(
-            os.path.join(path, file_path, file_path + '_t2.nii.gz')).get_data()
-
-        labels_nii_gz = load_nii(
-            os.path.join(path, file_path,
-                         file_path + '_seg.nii.gz')).get_data()
-
-        # Como estamos en un problema multiclase le saco la parte de set2 to0
-        try:
-            assert t1_nii_gz.shape == flair_nii_gz.shape
-            assert t1_nii_gz.shape == labels_nii_gz.shape
-        except:
-            st()
-
-        brainmask_nii_gz = None
-        if depth_crop is not None:
-            (depth_start, depth_end) = depth_crop
-            print(f"Cropping depth of MRI by: [{depth_start},{depth_end}]")
-            flair_nii_gz = flair_nii_gz[:, :, depth_start:depth_end]
-            t1_nii_gz = t1_nii_gz[:, :, depth_start:depth_end]
-            labels_nii_gz = labels_nii_gz[:, :, depth_start:depth_end]
-            brainmask_nii_gz = brainmask_nii_gz[:, :, depth_start:depth_end]
-
-        # Eliminé la clase porque no anda y directamente trabajo con el método
-        # z-score
-        if normalization is not None:
-            t1_nii_gz = normalization(t1_nii_gz)
-            flair_nii_gz = normalization(flair_nii_gz)
-            t1ce_nii_gz = normalization(t1ce_nii_gz)
-            t2_nii_gz = normalization(t2_nii_gz)
-
-        if shape_with_padding is not None:
-            flair_nii_gz = add_padding(flair_nii_gz, shape_with_padding)
-            t1_nii_gz = add_padding(t1_nii_gz, shape_with_padding)
-            labels_nii_gz = add_padding(labels_nii_gz, shape_with_padding)
-            brainmask_nii_gz = add_padding(brainmask_nii_gz,
-                                           shape_with_padding)
-            print(f"Adding padding to the first two coordinates by: "
-                  f"[{shape_with_padding}]")
-
-        try:
-            assert t1_nii_gz.shape == flair_nii_gz.shape
-            assert t1_nii_gz.shape == labels_nii_gz.shape
-            assert t1_nii_gz.shape == t1ce_nii_gz.shape
-            assert t1_nii_gz.shape == t2_nii_gz.shape
-        except:
-            st()
-
-        if fixed_range is not None:
-            (t1_min_voxel_value, t1_max_voxel_value, flair_min_voxel_value,
-             flair_max_voxel_value) = fixed_range
-            print("Fixing range to [-1,1]")
-            # === we modify the range to [-1,1]
-            t1_nii_gz = 2. * (t1_nii_gz - t1_min_voxel_value) / (
-                    t1_max_voxel_value - t1_min_voxel_value) - 1
-            flair_nii_gz = 2. * (flair_nii_gz - flair_min_voxel_value) / (
-                    flair_max_voxel_value - flair_min_voxel_value) - 1
-
-        one_element["flair"] = flair_nii_gz
-        one_element["t1"] = t1_nii_gz
-        one_element["labels"] = labels_nii_gz
-        one_element["t2"] = t2_nii_gz
-        one_element["t1ce"] = t1ce_nii_gz
-
-        # ===== We flip the images on the Y edge for data augmentation
-        data_augmentation_by_flipping = flipping
-        print('Data augmentation: ', data_augmentation_by_flipping)
-        if data_augmentation_by_flipping:
-            axis_to_flip = 2
-            one_element_flip = []
-            flair_nii_gz_flip = np.flip(flair_nii_gz, axis_to_flip)
-            t1_nii_gz_flip = np.flip(t1_nii_gz, axis_to_flip)
-            labels_nii_gz_flip = np.flip(labels_nii_gz, axis_to_flip)
-
-            one_element_flip.append(flair_nii_gz_flip)
-            one_element_flip.append(t1_nii_gz_flip)
-            one_element_flip.append(labels_nii_gz_flip)
-
-        # ===== We add them to the labeled data
-        print(f"Generating im_ptchs from image N°{elem_number}")
-
-        class1_patches_single_image, class2_patches_single_image, \
-        class4_patches_single_image, \
-        negative_patches_single_image = generate_patch_4_classes(one_element)
-        # Agos: im_ptchs positivos son los que tienen algunas de las 3 clases
-        # como pixel central
-
-        print(f"class1_patches obtained: {len(class1_patches_single_image)}  |"
-              f" class2_patches obtained: {len(class2_patches_single_image)}  "
-              f"| class4_patches obtained: {len(class4_patches_single_image)} "
-              f" | Negative im_ptchs obtained: "
-              f"{len(negative_patches_single_image)}")
-
-        class1_patches = class1_patches + class1_patches_single_image
-        class2_patches = class2_patches + class2_patches_single_image
-        class4_patches = class4_patches + class4_patches_single_image
-        negative_patches = negative_patches + negative_patches_single_image
-        print(f"class1_patches total: {len(class1_patches)}  | class2_patches "
-              f"obtained: {len(class2_patches)}  | class4_patches obtained: "
-              f"{len(class4_patches)}  | Negative im_ptchs obtained: "
-              f"{len(negative_patches)}")
-
-        print(f"Finished generating im_ptchs from image N°{elem_number}")
-        elem_number = elem_number + 1
-
-        print("Data loaded.")
-
-        if elem_number == 30:
-            # ==== We shuffle the im_ptchs
-            print("Patches generated. Shuffling...")
-            random.shuffle(class1_patches)
-            random.shuffle(class2_patches)
-            random.shuffle(class4_patches)
-            random.shuffle(negative_patches)
-            print("Patches shuffled.")
-
-            # ===== Parameters
-            num_images_per_archive = 1024
-            num_class1_patches = len(class1_patches)
-            num_class2_patches = len(class2_patches)
-            num_class4_patches = len(class4_patches)
-            num_negative_patches = len(negative_patches)
-
-            print(f"> NUM POSITIVE CLASS1: {num_class1_patches}")
-            print(f"> NUM POSITIVE CLASS2: {num_class2_patches}")
-            print(f"> NUM POSITIVE CLASS4: {num_class4_patches}")
-            print(f"> NUM NEGATIVE PATCHES: {num_negative_patches}")
-
-            num_of_archives = generate_npz_files(class1_patches,
-                                                 class2_patches,
-                                                 class4_patches,
-                                                 negative_patches,
-                                                 num_images_per_archive,
-                                                 full_dirname, num_of_archives)
-
-            print_parameters(num_of_archives, num_images_per_archive,
-                             num_class1_patches, num_class2_patches,
-                             num_class4_patches, num_negative_patches)
-
-            # ==== We save the metadata
-            f = open(os.path.join(patches_dir, metadata_dir), "w+")
-            f.write(str(num_of_archives * num_images_per_archive))
-            f.close()
-            print("Finished saving to npz files.")
-
-    # ==== We shuffle the im_ptchs
-    print("Ultimos parches generados......Patches generated. Shuffling...")
-    print('element number.....', elem_number)
-    random.shuffle(class1_patches)
-    random.shuffle(class2_patches)
-    random.shuffle(class4_patches)
-    random.shuffle(negative_patches)
-    print("Patches shuffled.")
-
-    # ===== Parameters
-    num_images_per_archive = 1024
-    num_class1_patches = len(class1_patches)
-    num_class2_patches = len(class2_patches)
-    num_class4_patches = len(class4_patches)
-    num_negative_patches = len(negative_patches)
-
-    print(f"> NUM POSITIVE CLASS1: {num_class1_patches}")
-    print(f"> NUM POSITIVE CLASS2: {num_class2_patches}")
-    print(f"> NUM POSITIVE CLASS4: {num_class4_patches}")
-    print(f"> NUM NEGATIVE PATCHES: {num_negative_patches}")
-
-    num_of_archives = generate_npz_files(class1_patches, class2_patches,
-                                         class4_patches, negative_patches,
-                                         num_images_per_archive, full_dirname,
-                                         num_of_archives)
-
-    print_parameters(num_of_archives, num_images_per_archive,
-                     num_class1_patches, num_class2_patches,
-                     num_class4_patches, num_negative_patches)
-
-    # ==== We save the metadata
-    f = open(os.path.join(patches_dir, metadata_dir), "w+")
-    f.write(str(num_of_archives * num_images_per_archive))
-    f.close()
-    print("Finished saving to npz files.")
-
-
-def generate_dataset_3d_ref(path, folders_pati, patches_dir, metadata_dir,
-                            subdirname, normalization, boxcox_lambda, flipping,
-                            fixed_range, depth_crop, shape_with_padding,
-                            mask_filtering, dataset='miccaibrats',
-                            images_per_file=1024, batch_size=20):
+    :param path: Input images path.
+    :param folders_pati: List of patient folders name.
+    :param patches_dir: Output patches directory.
+    :param metadata_fil: Filename of the metadata.
+    :param subdirname: Name of the split subfolder.
+    :param normalization: Apply normalization.
+    :param flipping: Apply flipping.
+    :param fixed_range: If given, apply normalization to the supplied range.
+    :param depth_crop: If given, crop the last dimension of the 3D image in the
+    supplied range
+    :param shape_with_padding: Pad the third dimension with the supplied value.
+    :param dataset: Dataset name. Must be one of the ones listed in
+    DATASET_NAMES.
+    :param images_per_file: Max amount of patches stored per file.
+    :param batch_size: Simultaneously subject images/patches loaded in RAM. A
+    bigger number will cause more RAM usage (In hepaticvessel, a size of 20
+    uses approximately 15GB of RAM).
+    :return:
+    """
     full_dirname = os.path.join(patches_dir, subdirname)
     print('full_dirname: ', full_dirname)
     if os.path.exists(full_dirname):
@@ -675,7 +368,7 @@ def generate_dataset_3d_ref(path, folders_pati, patches_dir, metadata_dir,
                              f"Add a list of labels (as strings) in "
                              f"SUFFIXES[dataset].")
 
-    ptch_imgs, ptch_lbls, n_files = {}, {}, 0
+    ptch_imgs, ptch_lbls, n_patches, n_files, met_no = {}, {}, {}, 0, 0
     for i, folder in enumerate(folders_pati, 1):  # For each patient's folder
         print(f"\nPatient no. {i} of {len(folders_pati)} "
               f"(Batch: {i % batch_size}/{batch_size}).")
@@ -686,8 +379,6 @@ def generate_dataset_3d_ref(path, folders_pati, patches_dir, metadata_dir,
                 print('------>', opened_file)
                 imgs[suff_i] = np.asanyarray(load_nii(opened_file).get_fdata())
 
-        # TODO Assert that the shapes are the same.
-
         for suff, img in imgs.items():  # For each image
             # Apply preprocessing
             if depth_crop:
@@ -695,8 +386,8 @@ def generate_dataset_3d_ref(path, folders_pati, patches_dir, metadata_dir,
                 print(f"Cropping depth of MRI by: [{depth_start},{depth_end}]")
                 imgs[suff] = img[:, :, depth_start:depth_end]
 
-            if normalization:
-                imgs[suff] = normalization(img)
+            if normalization:  # Call a Normalization instance?
+                ...
 
             if shape_with_padding:
                 print(f"Adding padding to the first two coordinates by: "
@@ -713,11 +404,10 @@ def generate_dataset_3d_ref(path, folders_pati, patches_dir, metadata_dir,
                     imgs[suff] = 2. * (img - min_rng) / (max_rng - min_rng) - 1
 
             # Apply augmentation
-            # TODO Flipping was not used finally, add it?
-            # if flipping:
-            #     print('Data augmentation: flipping')
-            #     axis_to_flip = 2
-            #     imgs[suff] = np.flip(img, axis_to_flip)
+            if flipping:
+                print('Data augmentation: flipping')
+                axis_to_flip = 2
+                imgs[suff] = np.flip(img, axis_to_flip)
 
             # Generate im_ptchs
             print(f"Generating im_ptchs for image {folder}")
@@ -725,14 +415,17 @@ def generate_dataset_3d_ref(path, folders_pati, patches_dir, metadata_dir,
             # For the patch extractor, if there is more than one label image,
             # the first one will be used.
             label_id = suffs_lbl[0]
-            ptch_im, ptch_lb = generate_patch_4_classes_ref(imgs,
-                                                            label_id=label_id)
+            ptch_im, ptch_lb = generate_patches(imgs, label_id=label_id)
 
             print("Patches per class: ")
             for p_class, images in ptch_im.items():  # Images
                 print(f"class{p_class} im_ptchs obtained: {len(images)}.")
 
-                # Add them to the list with the other subject image im_ptchs
+                if p_class not in n_patches:  # Update n_patches dict
+                    n_patches[p_class] = 0
+                n_patches[p_class] += len(images)
+
+                # Add patches to the list with the other subject image im_ptchs
                 if p_class not in ptch_imgs:  # New class
                     ptch_imgs[p_class] = []
                 ptch_imgs[p_class] += images
@@ -760,28 +453,50 @@ def generate_dataset_3d_ref(path, folders_pati, patches_dir, metadata_dir,
 
             print("Patches shuffled.")
 
-            n_files = generate_npz_files_ref(ptch_imgs, ptch_lbls,
-                                             images_per_file, full_dirname,
-                                             dataset=dataset, n_file=n_files)
+            n_files, met_no = generate_npz_files(ptch_imgs, ptch_lbls,
+                                                 full_dirname, images_per_file,
+                                                 True, None, n_files, met_no)
 
-            # print_parameters(n_files, images_per_file,
-            #                  num_class1_patches, num_class2_patches,
-            #                  num_class4_patches, num_negative_patches)
-
-            # ==== We save the metadata
-            f = open(os.path.join(patches_dir, metadata_dir), "a+")
-            f.write(str(n_files * images_per_file))
-            f.close()
             print("Finished saving to npz files.")
             del ptch_imgs, ptch_lbls
             ptch_imgs, ptch_lbls = {}, {}
 
+    print("Saved to compressed npz files...")
+    print("Parameters:")
+    print(f"  > NUM_OF_ARCHIVES = {n_files}")
+    print(f"  > NUM_IMAGES_PER_ARCHIVE = {images_per_file}")
+    # WARNING: The following numbers don't consider if there were dropped
+    # patches. In that case, each number will be a little smaller.
+    for cls, numb in n_patches.items():
+        print(f"  > NUM_CLASS{cls}_PATCHES = {numb}")
 
-def generate_train_val(dataset, flipping=False, normalization=None,
-                       boxcox_lambda=None, produce_hold_out=False,
-                       input_train_paths=None, mask_filtering=False,
-                       fixed_range=False, input_hold_out_paths=None,
-                       depth_crop=None, shape_with_padding=None):
+    # ==== We save the metadata
+    f = open(os.path.join(patches_dir, metadata_fil), "w+")
+    f.write(str(met_no))
+    f.close()
+
+
+def generate_train_val(dataset: Dataset, flipping: bool = False,
+                       normalization: bool = False,
+                       produce_hold_out: bool = True, fixed_range: list = (),
+                       depth_crop: list = (), shape_with_padding: bool = None,
+                       images_per_file: int = 1024, batch_size: int = 20):
+    """ Split the patients in train/val/holdout and produce the patches.
+
+    :param dataset: Name of the dataset. Must be listed in DATASET_NAMES.
+    :param flipping: Apply flipping.
+    :param normalization: Apply normalization.
+    :param produce_hold_out: Produce holdout split.
+    :param fixed_range: If given, apply normalization to the supplied range.
+    :param depth_crop: If given, crop the last dimension of the 3D image in the
+    supplied range
+    :param shape_with_padding: Pad the third dimension with the supplied value.
+    :param images_per_file: Max amount of patches stored per file.
+    :param batch_size: Simultaneously subject images/patches loaded in RAM. A
+    bigger number will cause more RAM usage (In hepaticvessel, a size of 20
+    uses approximately 15GB of RAM).
+    :return:
+    """
     print('Training and validation path: ', dataset.origin_directory)
     path = dataset.origin_directory
 
@@ -816,47 +531,38 @@ def generate_train_val(dataset, flipping=False, normalization=None,
               "the metadata files accordingly.")
     else:
         print("Generating val dataset...")
-        generate_dataset_3d_ref(path, val_paths, dataset.patches_directory,
-                                "metadata_val.txt", "val", normalization,
-                                boxcox_lambda, flipping, None, depth_crop,
-                                shape_with_padding, mask_filtering,
-                                dataset.name)
+        generate_dataset_3d(path, val_paths, dataset.patches_directory,
+                            "metadata_val.txt", "val", normalization,
+                            flipping, fixed_range, depth_crop,
+                            shape_with_padding, dataset.name,
+                            images_per_file, batch_size)
         print(f"Finished creating val dataset on {dataset.patches_directory}.")
 
     # ===== We generate train and val datasets
     print("Generating train dataset...")
-    generate_dataset_3d_ref(path, train_paths, dataset.patches_directory,
-                            "metadata_train.txt", "train", normalization,
-                            boxcox_lambda, flipping, None, depth_crop,
-                            shape_with_padding, mask_filtering, dataset.name)
+    generate_dataset_3d(path, train_paths, dataset.patches_directory,
+                        "metadata_train.txt", "train", normalization,
+                        flipping, fixed_range, depth_crop, shape_with_padding,
+                        dataset.name, images_per_file, batch_size)
     print(f"Finished creating train dataset on {dataset.patches_directory}.")
 
 
-def get_prediction_labels(prediction):
-    n_samples = prediction.shape[0]
-    label_arrays = []
+def build_dataset(orig_dir: str, patches_dir: str,
+                  dataset: str = 'miccaibrats', ims_file: int = 1024,
+                  batch_size: int = 20):
+    """ Build dataset wrapper func.
 
-    for sample_number in range(n_samples):
-        label_data = np.argmax(prediction[sample_number], axis=0)
-        label_data[label_data == 3] = 4
-        label_arrays.append(np.array(label_data, dtype=np.uint8))
-    return label_arrays
-
-
-def get_one_hot_prediction(y_pred):
-    hard_y_pred = np.copy(y_pred)
-
-    label_data = np.argmax(y_pred, axis=4)
-
-    for i in range(4):
-        hard_y_pred[:, :, :, :, i][label_data[:, :, :, :] == i] = 1
-        hard_y_pred[:, :, :, :, i][label_data[:, :, :, :] != i] = 0
-
-    return hard_y_pred
-
-
-def build_dataset(orig_dir, patches_dir, dataset='miccaibrats'):
-    generate_train_val(Dataset(dataset, orig_dir, patches_dir))
+    :param orig_dir: Input folder. Contains subfolders with the images.
+    :param patches_dir: Patches output folder.
+    :param dataset: Name of the dataset. Must be listed in DATASET_NAMES.
+    :param ims_file: Images per npz file.
+    :param batch_size: Amount of subjects used when loading images. A bigger
+    number will cause more RAM usage (In hepaticvessel, a size of 20 uses
+    approximately 15GB of RAM).
+    :return:
+    """
+    generate_train_val(Dataset(dataset, orig_dir, patches_dir),
+                       images_per_file=ims_file, batch_size=batch_size)
 
 
 if __name__ == "__main__":
