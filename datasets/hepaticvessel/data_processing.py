@@ -13,6 +13,7 @@ import os
 import sys
 import tarfile
 import numpy as np
+from ..build_dataset import build_dataset
 
 
 def sort_folders(path, suffs):
@@ -90,3 +91,8 @@ if __name__ == "__main__":
 
     sort_folders(folders[0], ['_ct.nii.gz', '_seg.nii.gz'])
     print(f'Sorted images saved in {folders[0]}')
+
+    origin_directory = folders[0]
+    patches_directory = os.path.join(origin_directory, 'patches')
+    build_dataset(origin_directory, patches_directory, 'hepaticvessel')
+
