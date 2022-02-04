@@ -238,12 +238,12 @@ def testing_ensemble(Nnet,kcross,metrics,model_fold,n_models,folder,save_results
 
 		    model_name=metric+'_ensemble_'+str(Nnet)+'_cross'+str(k)
 		    model_names.append(model_name)
-		    ensure_dir(os.path.join('./',save_results_fold,model_fold)    )
+		    ensure_dir(os.path.join('../', save_results_fold, model_fold))
 		    df = pd.DataFrame.from_records(rows, columns=header, index=subject_ids)
-		    df.to_csv(os.path.join('./',save_results_fold,model_fold,model_name+'.csv')) 
+		    df.to_csv(os.path.join('../', save_results_fold, model_fold, model_name + '.csv'))
 		    ensemble_mean.append(df.mean())       
 		df_means = pd.DataFrame.from_records(ensemble_mean, columns=header, index=model_names)
-		df_means.to_csv(os.path.join('./',save_results_fold,model_fold,'mean_'+metric+'_ensemble_'+str(Nnet)+'.csv'))   
+		df_means.to_csv(os.path.join('../', save_results_fold, model_fold, 'mean_' + metric + '_ensemble_' + str(Nnet) + '.csv'))
 
 				              
 

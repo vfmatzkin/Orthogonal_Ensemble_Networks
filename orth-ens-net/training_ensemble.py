@@ -7,7 +7,7 @@ from utils import *
 
 os.chdir(os.path.dirname(os.path.realpath(__file__)))  # Change working dir
 parser = ConfigParser()
-parser.read('config_file.ini')
+parser.read('datasets/brats/config.ini')
 
 
 def dice_coefficient(y_true, y_pred, n_labels):
@@ -201,11 +201,13 @@ def train_unet(model_fold, model_name, n=None, self_p=0, inter_p=0,
                 val_loss.append(loss)
                 mean_dice.append(dc)
             avg_val_loss = np.mean(val_loss)
-            if epoch == 1 or (epoch > 1 and avg_val_loss < best_loss_val_value):
+            if epoch == 1 or (
+                    epoch > 1 and avg_val_loss < best_loss_val_value):
                 best_loss_val_epoch = epoch
                 best_loss_val_value = avg_val_loss
 
-                print(f'New best model found (val loss: {best_loss_val_value})')
+                print(
+                    f'New best model found (val loss: {best_loss_val_value})')
                 print('Saving model: '.format(os.path.join(models_directory,
                                                            model_fold,
                                                            model_name)))
@@ -238,7 +240,8 @@ def train_unet(model_fold, model_name, n=None, self_p=0, inter_p=0,
     print('Saving model: '.format(os.path.join(models_directory, model_fold,
                                                model_name)))
     save_model(unet, os.path.join(models_directory, model_fold, model_name))
-    print(f'Best model: epoch {best_loss_val_epoch}, loss {best_loss_val_value}')
+    print(
+        f'Best model: epoch {best_loss_val_epoch}, loss {best_loss_val_value}')
 
     del unet
     del optimizer

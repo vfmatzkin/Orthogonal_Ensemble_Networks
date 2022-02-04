@@ -95,4 +95,3 @@ if __name__ == "__main__":
     origin_directory = folders[0]
     patches_directory = os.path.join(origin_directory, 'patches')
     build_dataset(origin_directory, patches_directory, 'hepaticvessel')
-
