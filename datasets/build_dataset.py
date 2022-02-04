@@ -227,7 +227,7 @@ def write_files_metadata(dataset: Dataset, train_paths: list, val_paths: list,
     """
     print('-------> Writing files to metadata:............................. ')
     metadata_file = os.path.join(dataset.patches_directory,
-                                 "metadata_files.txt")
+                                 "../metadata_files.txt")
     os.makedirs(os.path.dirname(metadata_file), exist_ok=True)
 
     f = open(metadata_file, "w")
