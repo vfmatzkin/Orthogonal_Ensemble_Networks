@@ -266,11 +266,11 @@ if __name__ == "__main__":
     if ensemble == 'random':  # TODO No le pasa el model_n en el original
         model_fold += '_random'
     elif ensemble == 'self-orthogonal':
-        self_p = parser["ENSEMBLE"].getfloat("p_selforth")
+        self_p = parser["ENSEMBLE"].getfloat("self_p")
         model_fold += f'_self-orthogonal_selfp_{self_p}'
     elif ensemble == 'inter-orthogonal':
-        self_p = parser["ENSEMBLE"].getfloat("p_selforth")
-        inter_p = parser["ENSEMBLE"].getfloat("p_interorth")
+        self_p = parser["ENSEMBLE"].getfloat("self_p")
+        inter_p = parser["ENSEMBLE"].getfloat("inter_p")
         model_fold += f'_inter-orthogonal_selfp_{self_p}_interp_{inter_p}'
     else:
         raise AttributeError(f'The ensemble type ({ensemble}) is not valid.')
