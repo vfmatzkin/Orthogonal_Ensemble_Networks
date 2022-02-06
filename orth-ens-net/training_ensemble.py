@@ -1,7 +1,5 @@
-import os
 import sys
 from configparser import ConfigParser
-from glob import glob
 
 from ResUNet_model import build_network
 from utils import *
@@ -57,12 +55,15 @@ def build_data_generator(path, batch_size, sample_weight=None):
                     yield t1_flair_batch, labels_batch, sample_weight
 
 
-def train_unet(model_fold, model_name, n=None, self_p=0, inter_p=0,
-               input_channels=2):
+def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
+               p_interorth: float):
     initial_learning_rate = parser["TRAIN"].getfloat("learning_rate")
     lrd = parser["TRAIN"].getfloat("learning_rate_decay")
     batch_size = parser["TRAIN"].getint("batch_size")
     epochs = parser["TRAIN"].getint("epochs")
+    input_channels = parser["TRAIN"].getint("input_channels")
+    output_channels = parser["TRAIN"].getint("output_channels")
+    model_no = 'model_{}'.format(model)
 
     f_train = open(os.path.join(patches_directory, "metadata_train.txt"), "r")
     n_train = int(f_train.read())
@@ -82,8 +83,7 @@ def train_unet(model_fold, model_name, n=None, self_p=0, inter_p=0,
     print("steps_per_epoch:", steps_per_epoch)
     print("Validation Steps:", val_steps)
 
-    def DivRegularization(kernel_name, model_number):
-
+    def div_regularization(kernel_name, model_number):
         training_kernel = unet.get_layer(kernel_name).weights[0]
         kernel = training_kernel
         [kh, kw, kd, i_c, o_c] = kernel.shape
@@ -98,9 +98,8 @@ def train_unet(model_fold, model_name, n=None, self_p=0, inter_p=0,
         inter_models_error = 0
         if (ensemble == 'inter-orthogonal') and (model_number != 0):
             for n_model in range(model_number):
-                reference = \
-                    reference_weights[n_model].get_layer(kernel_name).weights[
-                        0]
+                reference = reference_weights[
+                    n_model].get_layer(kernel_name).weights[0]
                 reference = tf.reshape(reference, (kh * kw * kd * i_c, o_c))
                 reference = K.transpose(reference)
                 reference_norm = K.l2_normalize(reference, axis=-1)
@@ -112,39 +111,36 @@ def train_unet(model_fold, model_name, n=None, self_p=0, inter_p=0,
 
         return self_error, inter_models_error
 
-    # @tf.function  # Make it fast.
-    def train_on_batch(data):
-        x, y = data
+    def train_on_batch(xy):
+        x, y = xy
         with tf.GradientTape() as tape:
             segmentation = unet(x)
             loss_reconstruction = dice_loss(y, segmentation, n_labels=1)
 
-            self_orthogonal_loss = 0
-            inter_orthogonal_loss = 0
-            if (ensemble == 'inter-orthogonal') or (
-                    ensemble == 'self-orthogonal'):
-
-                for leyer in range(1, 17):
-                    self_o, inter_o = DivRegularization(
-                        kernel_name='conv3d_' + str(leyer), model_number=n)
+            self_orthogonal_loss, inter_orthogonal_loss = 0, 0
+            if ensemble in ['inter-orthogonal', 'self-orthogonal']:
+                for layer in range(1, 17):
+                    self_o, inter_o = div_regularization(f'conv3d_{layer}',
+                                                         model_n)
                     inter_orthogonal_loss += inter_o
                     self_orthogonal_loss += self_o
 
-            final_loss = loss_reconstruction + self_p * self_orthogonal_loss + inter_p * inter_orthogonal_loss
+            final_loss = loss_reconstruction + \
+                         p_selforth * self_orthogonal_loss + \
+                         p_interorth * inter_orthogonal_loss
 
             gradients = tape.gradient(final_loss, unet.trainable_weights)
 
         optimizer.apply_gradients(zip(gradients, unet.trainable_weights))
-        return loss_reconstruction, inter_orthogonal_loss, self_orthogonal_loss, final_loss
+        return loss_reconstruction, inter_orthogonal_loss, \
+               self_orthogonal_loss, final_loss
 
-    @tf.function  # Make it fast.
-    def val_on_batch(data, input_channels=2):
-
-        x, gt = data
+    @tf.function
+    def val_on_batch(xgt):
+        x, gt = xgt
         segmentation = unet(x)
-        loss = dice_loss(gt, segmentation, n_labels=1)
-        dc = dice_coefficient(gt, segmentation, n_labels=1)
-
+        loss = dice_loss(gt, segmentation, output_channels)
+        dc = dice_coefficient(gt, segmentation, output_channels)
         return loss, dc
 
     train_dir = os.path.join(patches_directory, 'train')
@@ -152,24 +148,24 @@ def train_unet(model_fold, model_name, n=None, self_p=0, inter_p=0,
     val_dir = os.path.join(patches_directory, 'val')
     val_generator = build_data_generator(val_dir, batch_size)
 
-    inputs, outputs = build_network(input_channels)
+    inputs, outputs = build_network(input_channels, output_channels)
     unet = keras.Model(inputs, outputs)
     unet.summary()
     optimizer = tf.keras.optimizers.Adam(lr=initial_learning_rate)
 
     summary_writer = tf.summary.create_file_writer(
-        os.path.join(logs_directory, model_fold, model_name))
+        os.path.join(logs_directory, dtset_arch, model_no))
 
-    model_folder = os.path.join(models_directory, model_fold)
+    model_folder = os.path.join(models_directory, dtset_arch)
     os.makedirs(model_folder, exist_ok=True)
     print(f"Model will be saved in: {model_folder}.")
 
     if ensemble == 'inter-orthogonal':
         reference_weights = list()
-        for i in range(n):
+        for i in range(model_n):
             model_ref_name = 'model_' + str(i)
             model_ref = load_model(
-                os.path.join(models_directory, model_fold, model_ref_name))
+                os.path.join(models_directory, dtset_arch, model_ref_name))
             reference_weights.append(model_ref)
 
     best_loss_val_value = None
@@ -199,19 +195,17 @@ def train_unet(model_fold, model_name, n=None, self_p=0, inter_p=0,
                 val_loss.append(loss)
                 mean_dice.append(dc)
             avg_val_loss = np.mean(val_loss)
-            if epoch == 1 or (
-                    epoch > 1 and avg_val_loss < best_loss_val_value):
+            if epoch == 1 or (epoch > 1 and
+                              avg_val_loss < best_loss_val_value):
                 best_loss_val_epoch = epoch
                 best_loss_val_value = avg_val_loss
 
-                print(
-                    f'New best model found (val loss: {best_loss_val_value})')
-                print('Saving model: '.format(os.path.join(models_directory,
-                                                           model_fold,
-                                                           model_name)))
-                ep_m_name = model_name + f'_ep{best_loss_val_epoch}'
-                save_model(unet, os.path.join(models_directory, model_fold,
-                                              ep_m_name))
+                print(f'New best model found. Val loss {best_loss_val_value})')
+                model_path = os.path.join(models_directory, dtset_arch,
+                                          model_no)
+                print(f'Saving model: {model_path}. If it already existed, it '
+                      f'was overwrited.')
+                save_model(unet, model_path)
 
             with summary_writer.as_default():
                 tf.summary.scalar('trainining_loss', np.mean(cum_loss),
@@ -235,11 +229,8 @@ def train_unet(model_fold, model_name, n=None, self_p=0, inter_p=0,
         if epoch % 10 == 0:
             optimizer.learning_rate.assign(optimizer.learning_rate * lrd)
 
-    print('Saving model: '.format(os.path.join(models_directory, model_fold,
-                                               model_name)))
-    save_model(unet, os.path.join(models_directory, model_fold, model_name))
-    print(
-        f'Best model: epoch {best_loss_val_epoch}, loss {best_loss_val_value}')
+    print(f'Best model: epoch {best_loss_val_epoch}, '
+          f'loss {best_loss_val_value}')
 
     del unet
     del optimizer
@@ -259,7 +250,6 @@ if __name__ == "__main__":
     patches_directory = parser["DEFAULT"].get("patches_directory")
     models_directory = parser["DEFAULT"].get("models_directory")
     logs_directory = parser["DEFAULT"].get("logs_directory")
-    input_channels = parser["DEFAULT"].getint("input_channels")
 
     if os.path.isdir(patches_directory):
         print('patches directory: ', patches_directory)
@@ -272,26 +262,19 @@ if __name__ == "__main__":
     network = parser["ENSEMBLE"].get("network")
 
     model_fold = dataset_name + '_' + network
-    if ensemble == 'random':
+    n, self_p, inter_p = None, 0, 0
+    if ensemble == 'random':  # TODO No le pasa el model_n en el original
         model_fold += '_random'
-        for model in range(n_models):
-            model_name = 'model_{}'.format(model)
-            train_unet(model_fold, model_name, input_channels=input_channels)
     elif ensemble == 'self-orthogonal':
-        self_p = parser["ENSEMBLE"].getfloat("self_p")
+        self_p = parser["ENSEMBLE"].getfloat("p_selforth")
         model_fold += f'_self-orthogonal_selfp_{self_p}'
-        for model in range(n_models):
-            model_name = 'model_{}'.format(model)
-            train_unet(model_fold, model_name, n=model, self_p=self_p,
-                       input_channels=input_channels)
     elif ensemble == 'inter-orthogonal':
-        self_p = parser["ENSEMBLE"].getfloat("self_p")
-        inter_p = parser["ENSEMBLE"].getfloat("inter_p")
+        self_p = parser["ENSEMBLE"].getfloat("p_selforth")
+        inter_p = parser["ENSEMBLE"].getfloat("p_interorth")
         model_fold += f'_inter-orthogonal_selfp_{self_p}_interp_{inter_p}'
-        for model in range(n_models):
-            print('model: ', model)
-            model_name = 'model_{}'.format(model)
-            train_unet(model_fold, model_name, n=model, self_p=self_p,
-                       inter_p=inter_p, input_channels=input_channels)
     else:
         raise AttributeError(f'The ensemble type ({ensemble}) is not valid.')
+
+    for model in range(n_models):
+        print('model: ', model)
+        train_unet(model_fold, model, self_p, inter_p)

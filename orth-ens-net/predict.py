@@ -1,3 +1,5 @@
+import sys
+
 from utils import *
 from configparser import ConfigParser
 
@@ -104,8 +106,13 @@ def load_and_predict_raw_image(hold_out_images, model_name, model_fold,
 
 
 if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        raise AttributeError(f"When running 'python predict.py' you also"
+                             f"must provide the path of the configuration file"
+                             f" (.ini).")
+    ini_file = sys.argv[1]
     parser = ConfigParser()
-    parser.read('config_file.ini')
+    parser.read(ini_file)
 
     origin_directory = parser['DEFAULT'].get('image_source_dir')
     segmentation_directory = parser['DEFAULT'].get('segmentation_directory')
@@ -121,4 +128,4 @@ if __name__ == "__main__":
         for i in range(n_models):
             model_name = 'model_{}'.format(i)
             load_and_predict_raw_image(hold_out_images, model_name, model_fold,
-                                       normalization_function=z_scores_normalization)
+                                       z_scores_normalization)

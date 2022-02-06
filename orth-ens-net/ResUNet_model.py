@@ -2,7 +2,7 @@ from tensorflow.keras.layers import Conv3D, MaxPooling3D, \
     Conv3DTranspose, Input, concatenate
 
 
-def build_network(input_channels):
+def build_network(input_channels, output_channels):
     inputs = Input((None, None, None, input_channels))
     conv1 = Conv3D(32, (3, 3, 3), activation='relu', padding='same')(inputs)
     conv1 = Conv3D(32, (3, 3, 3), activation='relu', padding='same')(conv1)
@@ -52,6 +52,6 @@ def build_network(input_channels):
     conv9 = Conv3D(32, (3, 3, 3), activation='relu', padding='same')(conv9)
     conc9 = concatenate([up9, conv9], axis=4)
 
-    conv10 = Conv3D(1, (1, 1, 1), activation='sigmoid')(conc9)
+    conv10 = Conv3D(output_channels, (1, 1, 1), activation='sigmoid')(conc9)
 
     return inputs, conv10
