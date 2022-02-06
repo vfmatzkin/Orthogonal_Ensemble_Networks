@@ -1,4 +1,5 @@
 import os
+import sys
 from configparser import ConfigParser
 from glob import glob
 
@@ -7,7 +8,6 @@ from utils import *
 
 os.chdir(os.path.dirname(os.path.realpath(__file__)))  # Change working dir
 parser = ConfigParser()
-parser.read('datasets/brats/config.ini')
 
 
 def dice_coefficient(y_true, y_pred, n_labels):
@@ -58,7 +58,7 @@ def build_data_generator(path, batch_size, sample_weight=None):
 
 
 def train_unet(model_fold, model_name, n=None, self_p=0, inter_p=0,
-               n_classes=2):
+               input_channels=2):
     initial_learning_rate = parser["TRAIN"].getfloat("learning_rate")
     lrd = parser["TRAIN"].getfloat("learning_rate_decay")
     batch_size = parser["TRAIN"].getint("batch_size")
@@ -74,8 +74,6 @@ def train_unet(model_fold, model_name, n=None, self_p=0, inter_p=0,
     n_val = int(f_val.read())
     f_val.close()
     val_steps = (n_val // batch_size)
-
-    n_total = n_val + n_train
 
     print("-------- PARAMETERS")
     print("n_train = {}".format(n_train))
@@ -140,7 +138,7 @@ def train_unet(model_fold, model_name, n=None, self_p=0, inter_p=0,
         return loss_reconstruction, inter_orthogonal_loss, self_orthogonal_loss, final_loss
 
     @tf.function  # Make it fast.
-    def val_on_batch(data, n_classes=2):
+    def val_on_batch(data, input_channels=2):
 
         x, gt = data
         segmentation = unet(x)
@@ -154,7 +152,7 @@ def train_unet(model_fold, model_name, n=None, self_p=0, inter_p=0,
     val_dir = os.path.join(patches_directory, 'val')
     val_generator = build_data_generator(val_dir, batch_size)
 
-    inputs, outputs = build_network(n_classes)
+    inputs, outputs = build_network(input_channels)
     unet = keras.Model(inputs, outputs)
     unet.summary()
     optimizer = tf.keras.optimizers.Adam(lr=initial_learning_rate)
@@ -250,45 +248,50 @@ def train_unet(model_fold, model_name, n=None, self_p=0, inter_p=0,
 
 
 if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        raise AttributeError(f"When running 'python training_ensemble.py' you "
+                             f"must provide the path of the configuration file"
+                             f" (.ini).")
+    ini_file = sys.argv[1]
+    parser.read(ini_file)
+
+    dataset_name = parser["ENSEMBLE"].get("dataset")
     patches_directory = parser["DEFAULT"].get("patches_directory")
     models_directory = parser["DEFAULT"].get("models_directory")
     logs_directory = parser["DEFAULT"].get("logs_directory")
-    n_classes = parser["DEFAULT"].getint("n_classes")
+    input_channels = parser["DEFAULT"].getint("input_channels")
 
     if os.path.isdir(patches_directory):
         print('patches directory: ', patches_directory)
     else:
-        print(' ------ patches directory does not exist ')
+        raise FileNotFoundError(f' ------ patches directory does not exist ('
+                                f'{patches_directory}).')
 
     ensemble = parser["ENSEMBLE"].get("ensemble")
     n_models = parser["ENSEMBLE"].getint("n_models")
     network = parser["ENSEMBLE"].get("network")
 
+    model_fold = dataset_name + '_' + network
     if ensemble == 'random':
-        model_fold = 'wmh_' + network + '_random'
+        model_fold += '_random'
         for model in range(n_models):
             model_name = 'model_{}'.format(model)
-            train_unet(model_fold, model_name, n_classes=n_classes)
-
+            train_unet(model_fold, model_name, input_channels=input_channels)
     elif ensemble == 'self-orthogonal':
         self_p = parser["ENSEMBLE"].getfloat("self_p")
-        model_fold = 'wmh_' + network + '_self-orthogonal_selfp_{}'.format(
-            self_p)
+        model_fold += f'_self-orthogonal_selfp_{self_p}'
         for model in range(n_models):
             model_name = 'model_{}'.format(model)
             train_unet(model_fold, model_name, n=model, self_p=self_p,
-                       n_classes=n_classes)
-
+                       input_channels=input_channels)
     elif ensemble == 'inter-orthogonal':
         self_p = parser["ENSEMBLE"].getfloat("self_p")
         inter_p = parser["ENSEMBLE"].getfloat("inter_p")
-        model_fold = 'wmh_' + network + '_inter-orthogonal_selfp_{}_interp_{}'.format(
-            self_p, inter_p)
+        model_fold += f'_inter-orthogonal_selfp_{self_p}_interp_{inter_p}'
         for model in range(n_models):
             print('model: ', model)
             model_name = 'model_{}'.format(model)
             train_unet(model_fold, model_name, n=model, self_p=self_p,
-                       inter_p=inter_p, n_classes=n_classes)
-
+                       inter_p=inter_p, input_channels=input_channels)
     else:
-        print('Please, enter the ensemble whould you want to train')
+        raise AttributeError(f'The ensemble type ({ensemble}) is not valid.')

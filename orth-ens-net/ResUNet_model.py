@@ -2,8 +2,8 @@ from tensorflow.keras.layers import Conv3D, MaxPooling3D, \
     Conv3DTranspose, Input, concatenate
 
 
-def build_network(n_classes):
-    inputs = Input((None, None, None, n_classes))
+def build_network(input_channels):
+    inputs = Input((None, None, None, input_channels))
     conv1 = Conv3D(32, (3, 3, 3), activation='relu', padding='same')(inputs)
     conv1 = Conv3D(32, (3, 3, 3), activation='relu', padding='same')(conv1)
     conc1 = concatenate([inputs, conv1], axis=4)

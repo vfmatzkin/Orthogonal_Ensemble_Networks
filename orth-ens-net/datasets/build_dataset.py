@@ -535,7 +535,7 @@ def generate_train_val(dataset: Dataset, flipping: bool = False,
                             "metadata_val.txt", "val", normalization,
                             flipping, fixed_range, depth_crop,
                             shape_with_padding, dataset.name,
-                            images_per_file, batch_size)
+                            images_per_file, min(n_val, batch_size))
         print(f"Finished creating val dataset on {dataset.patches_directory}.")
 
     # ===== We generate train and val datasets
@@ -543,7 +543,8 @@ def generate_train_val(dataset: Dataset, flipping: bool = False,
     generate_dataset_3d(path, train_paths, dataset.patches_directory,
                         "metadata_train.txt", "train", normalization,
                         flipping, fixed_range, depth_crop, shape_with_padding,
-                        dataset.name, images_per_file, batch_size)
+                        dataset.name, images_per_file, min(n_train,
+                                                           batch_size))
     print(f"Finished creating train dataset on {dataset.patches_directory}.")
 
 
