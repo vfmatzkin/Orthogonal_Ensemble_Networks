@@ -39,14 +39,15 @@ def build_data_generator(path, batch_size, sample_weight=None):
             n_file += 1
             archive = np.load(npz)
 
-            t1_flair = archive['t1_flair']
+            images = archive['t1_flair'] if 't1_flair' in archive \
+                else archive['images']
             labels = archive['labels']
             del archive
-            assert len(t1_flair) == 1024 or len(t1_flair) == 1
+            assert len(images) == 1024 or len(images) == 1
 
-            for i in range(0, len(t1_flair), batch_size):
-                end_i = min(i + batch_size, len(t1_flair))
-                t1_flair_batch = t1_flair[i:end_i]
+            for i in range(0, len(images), batch_size):
+                end_i = min(i + batch_size, len(images))
+                t1_flair_batch = images[i:end_i]
                 labels_batch = labels[i:end_i]
 
                 if sample_weight == None:
