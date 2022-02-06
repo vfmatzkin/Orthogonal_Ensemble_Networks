@@ -3,6 +3,7 @@ from configparser import ConfigParser
 
 from ResUNet_model import build_network
 from utils import *
+from tensorflow.keras.utils import to_categorical
 
 os.chdir(os.path.dirname(os.path.realpath(__file__)))  # Change working dir
 parser = ConfigParser()
@@ -27,7 +28,7 @@ def dice_loss(y_true, y_pred, n_labels):
     return 1.0 - dice_coefficient(y_true, y_pred, n_labels)
 
 
-def build_data_generator(path, batch_size, sample_weight=None):
+def build_data_generator(path, batch_size, n_classes=None, sample_weight=None):
     files = glob(os.path.join(path, '*.npz'))
     print(' Number of files: ', np.shape(files))
 
@@ -45,15 +46,20 @@ def build_data_generator(path, batch_size, sample_weight=None):
             del archive
             assert len(images) == 1024 or len(images) == 1
 
+            # FRANCO: Since the model output will contain output_channels,
+            # The labels must be encoded as one_hot
+            if n_classes:
+                labels = to_categorical(labels, n_classes)
+
             for i in range(0, len(images), batch_size):
                 end_i = min(i + batch_size, len(images))
-                t1_flair_batch = images[i:end_i]
+                images_batch = images[i:end_i]
                 labels_batch = labels[i:end_i]
 
-                if sample_weight == None:
-                    yield t1_flair_batch, labels_batch
+                if sample_weight is None:
+                    yield images_batch, labels_batch
                 else:
-                    yield t1_flair_batch, labels_batch, sample_weight
+                    yield images_batch, labels_batch, sample_weight
 
 
 def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
@@ -63,7 +69,7 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
     batch_size = parser["TRAIN"].getint("batch_size")
     epochs = parser["TRAIN"].getint("epochs")
     input_channels = parser["TRAIN"].getint("input_channels")
-    output_channels = parser["TRAIN"].getint("output_channels")
+    out_channels = parser["TRAIN"].getint("output_channels")
     model_no = 'model_{}'.format(model)
 
     f_train = open(os.path.join(patches_directory, "metadata_train.txt"), "r")
@@ -140,16 +146,16 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
     def val_on_batch(xgt):
         x, gt = xgt
         segmentation = unet(x)
-        loss = dice_loss(gt, segmentation, output_channels)
-        dc = dice_coefficient(gt, segmentation, output_channels)
+        loss = dice_loss(gt, segmentation, out_channels)
+        dc = dice_coefficient(gt, segmentation, out_channels)
         return loss, dc
 
     train_dir = os.path.join(patches_directory, 'train')
-    train_generator = build_data_generator(train_dir, batch_size)
+    train_generator = build_data_generator(train_dir, batch_size, out_channels)
     val_dir = os.path.join(patches_directory, 'val')
-    val_generator = build_data_generator(val_dir, batch_size)
+    val_generator = build_data_generator(val_dir, batch_size, out_channels)
 
-    inputs, outputs = build_network(input_channels, output_channels)
+    inputs, outputs = build_network(input_channels, out_channels)
     unet = keras.Model(inputs, outputs)
     unet.summary()
     optimizer = tf.keras.optimizers.Adam(lr=initial_learning_rate)
