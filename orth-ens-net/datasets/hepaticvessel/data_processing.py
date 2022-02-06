@@ -13,7 +13,7 @@ import os
 import sys
 import tarfile
 import numpy as np
-from ..build_dataset import build_dataset
+from tqdm import tqdm
 
 
 def sort_folders(path, suffs):
@@ -45,7 +45,9 @@ def sort_folders(path, suffs):
     :return:
     """
     files = os.listdir(path)
+    print(f"\nListing {files}")
     for file in files:
+        print(file)
         contains = [file.endswith(s) for s in suffs]
         if not any(contains):
             supp_exts = ", ".join(suffs)
@@ -55,10 +57,13 @@ def sort_folders(path, suffs):
         suff = suffs[np.where(contains)[0][0]]
         folder_name = file[0:-len(suff)]
         new_folder_path = os.path.join(path, folder_name)
+        print(f"New folder: {new_folder_path}")
         os.makedirs(new_folder_path, exist_ok=True)
         full_file_path = os.path.join(path, file)
+        print(f"Old file path: {full_file_path}")
         new_file_path = os.path.join(new_folder_path, file)
-        print(f"Moving {full_file_path} to {new_file_path}")
+        print(f"New file path: {new_file_path}")
+        # print(f"Moving {full_file_path} to {new_file_path}")
         os.rename(full_file_path, new_file_path)
 
 
@@ -66,12 +71,20 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         raise AttributeError("Enter the path of the .tar file or the excracted"
                              " folder. ")
-    input_path = sys.argv[1]
+    input_path = os.path.expanduser(sys.argv[1])
     if input_path.endswith('.tar'):
         print(f"Extracting {input_path}...")
-        tar = tarfile.open(input_path)
-        extr_folder = input_path[:-4]
-        tar.extractall(path=extr_folder)
+        #tar = tarfile.open(input_path)
+        extr_folder = os.path.split(input_path)[0]
+        #tar.extractall(path=extr_folder)
+
+        with tarfile.open(name=input_path) as tar:
+            for member in tqdm(iterable=tar.getmembers(),
+                               total=len(tar.getmembers())):
+                if os.path.split(member.path)[1][::-1][-2:] == '_.':
+                    continue
+                tar.extract(path=extr_folder, member=member)
+        extr_folder = os.path.join(extr_folder, 'Task08_HepaticVessel')
     else:
         extr_folder = input_path
 
@@ -94,4 +107,3 @@ if __name__ == "__main__":
 
     origin_directory = folders[0]
     patches_directory = os.path.join(origin_directory, 'patches')
-    build_dataset(origin_directory, patches_directory, 'hepaticvessel')
