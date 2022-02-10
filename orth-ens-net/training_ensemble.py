@@ -1,15 +1,22 @@
+import os
 import sys
 from configparser import ConfigParser
+from glob import glob
+from random import shuffle
+
+import keras.backend as K
+import numpy as np
+import tensorflow as tf
 
 from ResUNet_model import build_network
-from utils import *
-from tensorflow.keras.utils import to_categorical
+from utils import save_model, load_model, one_hot_labels
 
 os.chdir(os.path.dirname(os.path.realpath(__file__)))  # Change working dir
 parser = ConfigParser()
 
 
 def dice_coefficient(y_true, y_pred, n_labels):
+    n_labels = 1 if n_labels is None else n_labels
     y_true = K.cast(y_true, "float")
     dice_coef = 0
     for i in range(n_labels):
@@ -28,7 +35,7 @@ def dice_loss(y_true, y_pred, n_labels):
     return 1.0 - dice_coefficient(y_true, y_pred, n_labels)
 
 
-def build_data_generator(path, batch_size, n_classes=None, sample_weight=None):
+def build_data_generator(path, batch_size, n_classes=None, classes=None):
     files = glob(os.path.join(path, '*.npz'))
     print(' Number of files: ', np.shape(files))
 
@@ -46,20 +53,15 @@ def build_data_generator(path, batch_size, n_classes=None, sample_weight=None):
             del archive
             assert len(images) == 1024 or len(images) == 1
 
-            # FRANCO: Since the model output will contain output_channels,
-            # The labels must be encoded as one_hot
-            if n_classes:
-                labels = to_categorical(labels, n_classes)
+            if n_classes > 1:
+                labels = one_hot_labels(labels, n_classes, classes)
 
             for i in range(0, len(images), batch_size):
                 end_i = min(i + batch_size, len(images))
                 images_batch = images[i:end_i]
                 labels_batch = labels[i:end_i]
 
-                if sample_weight is None:
-                    yield images_batch, labels_batch
-                else:
-                    yield images_batch, labels_batch, sample_weight
+                yield images_batch, labels_batch
 
 
 def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
@@ -69,19 +71,28 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
     batch_size = parser["TRAIN"].getint("batch_size")
     epochs = parser["TRAIN"].getint("epochs")
     input_channels = parser["TRAIN"].getint("input_channels")
-    out_channels = parser["TRAIN"].getint("output_channels")
+    out_channels = parser["TRAIN"].getint("output_channels") if \
+        parser['TRAIN']['output_channels'] != '' else None
     model_no = 'model_{}'.format(model)
+    if 'labels' in parser['TRAIN']:  # labels='1,2,4' --> labels = [1, 2, 4]
+        lab = parser['TRAIN']['labels']
+        labels = list(map(int, lab.split(','))) if ',' in lab else lab
+    else:
+        labels = list(range(out_channels))  # out_ch=3 -> labels = [0,1,2]
+    data_repetition = 1
+    if 'data_repetition' in parser['TRAIN']:
+        data_repetition = parser['TRAIN'].getfloat('data_repetition')
 
     f_train = open(os.path.join(patches_directory, "metadata_train.txt"), "r")
     n_train = int(f_train.read())
     f_train.close()
 
-    steps_per_epoch = (n_train // 50 // batch_size)
+    steps_per_epoch = max(1, int(n_train * data_repetition / batch_size))
 
     f_val = open(os.path.join(patches_directory, "metadata_val.txt"), "r")
     n_val = int(f_val.read())
     f_val.close()
-    val_steps = (n_val // batch_size)
+    val_steps = max(1, (n_val // batch_size))
 
     print("-------- PARAMETERS")
     print("n_train = {}".format(n_train))
@@ -122,19 +133,18 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
         x, y = xy
         with tf.GradientTape() as tape:
             segmentation = unet(x)
-            loss_reconstruction = dice_loss(y, segmentation, n_labels=1)
+            loss_reconstruction = dice_loss(y, segmentation, out_channels)
+            final_loss = loss_reconstruction
 
             self_orthogonal_loss, inter_orthogonal_loss = 0, 0
+            for layer in range(1, 17):
+                self_o, inter_o = div_regularization(f'conv3d_{layer}',
+                                                     model_n)
+                inter_orthogonal_loss += inter_o
+                self_orthogonal_loss += self_o
             if ensemble in ['inter-orthogonal', 'self-orthogonal']:
-                for layer in range(1, 17):
-                    self_o, inter_o = div_regularization(f'conv3d_{layer}',
-                                                         model_n)
-                    inter_orthogonal_loss += inter_o
-                    self_orthogonal_loss += self_o
-
-            final_loss = loss_reconstruction + \
-                         p_selforth * self_orthogonal_loss + \
-                         p_interorth * inter_orthogonal_loss
+                final_loss += p_selforth * self_orthogonal_loss + \
+                              p_interorth * inter_orthogonal_loss
 
             gradients = tape.gradient(final_loss, unet.trainable_weights)
 
@@ -151,12 +161,14 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
         return loss, dc
 
     train_dir = os.path.join(patches_directory, 'train')
-    train_generator = build_data_generator(train_dir, batch_size, out_channels)
+    train_generator = build_data_generator(train_dir, batch_size, out_channels,
+                                           labels)
     val_dir = os.path.join(patches_directory, 'val')
-    val_generator = build_data_generator(val_dir, batch_size, out_channels)
+    val_generator = build_data_generator(val_dir, batch_size, out_channels,
+                                         labels)
 
     inputs, outputs = build_network(input_channels, out_channels)
-    unet = keras.Model(inputs, outputs)
+    unet = tf.keras.Model(inputs, outputs)
     unet.summary()
     optimizer = tf.keras.optimizers.Adam(lr=initial_learning_rate)
 
@@ -180,12 +192,14 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
 
     for epoch in range(1, epochs):
         print('--- Epoch  ', epoch, ' /', epochs)
+        print("-Phase: Train")
         cum_inter_orth = list()
         cum_self_orth = list()
         cum_rec = list()
         cum_loss = list()
 
         for step in range(steps_per_epoch):
+            print('      step  ', step, ' /', steps_per_epoch)
             data = next(train_generator)
             loss_rec, inter_orth, self_orth, final_loss = train_on_batch(data)
             cum_loss.append(final_loss)
@@ -194,6 +208,7 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
             cum_rec.append(loss_rec)
 
         if (epoch - 1) % 1 == 0:
+            print("-Phase: Validation")
             val_loss = list()
             mean_dice = list()
             for vfiles in range(val_steps):
@@ -215,19 +230,19 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
                 save_model(unet, model_path)
 
             with summary_writer.as_default():
-                tf.summary.scalar('trainining_loss', np.mean(cum_loss),
+                tf.summary.scalar('training/loss', np.mean(cum_loss),
                                   step=epoch)
-                tf.summary.scalar('training_dice-loss', np.mean(cum_rec),
+                tf.summary.scalar('training/dice-loss', np.mean(cum_rec),
                                   step=epoch)
-                tf.summary.scalar('trainig_inter-orthogonal_loss',
+                tf.summary.scalar('training/inter-orthogonal_loss',
                                   np.mean(cum_inter_orth), step=epoch)
-                tf.summary.scalar('training_self-orthogonal_loss',
+                tf.summary.scalar('training/self-orthogonal_loss',
                                   np.mean(cum_self_orth), step=epoch)
-                tf.summary.scalar('validation-loss', np.mean(val_loss),
+                tf.summary.scalar('validation/loss', np.mean(val_loss),
                                   step=epoch)
-                tf.summary.scalar('validation-dice: ', np.mean(mean_dice),
-                                  step=epoch)
-                tf.summary.scalar('Learning_rate: ',
+                tf.summary.scalar('validation/dice_coefficient: ',
+                                  np.mean(mean_dice), step=epoch)
+                tf.summary.scalar('learning_rate: ',
                                   optimizer.learning_rate.numpy(), step=epoch)
 
             print('Epoch: ', epoch, '  Validation dice coeff: ',

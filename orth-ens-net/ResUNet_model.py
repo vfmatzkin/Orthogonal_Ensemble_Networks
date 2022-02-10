@@ -52,6 +52,7 @@ def build_network(input_channels, output_channels):
     conv9 = Conv3D(32, (3, 3, 3), activation='relu', padding='same')(conv9)
     conc9 = concatenate([up9, conv9], axis=4)
 
-    conv10 = Conv3D(output_channels, (1, 1, 1), activation='sigmoid')(conc9)
+    act = 'sigmoid' if output_channels == 1 else 'softmax'
+    conv10 = Conv3D(output_channels, (1, 1, 1), activation=act)(conc9)
 
     return inputs, conv10
