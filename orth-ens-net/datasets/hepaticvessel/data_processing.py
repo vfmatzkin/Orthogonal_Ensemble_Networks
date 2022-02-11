@@ -3,7 +3,7 @@
 This script grabs the .tar file (or the extracted folder) and prepares the
 files to the patch generation process.
 
-Usage: python hepaticvessel.py [.TAR FILE|EXTRACTED FOLDER]
+Usage: python data_processing.py [.TAR FILE|EXTRACTED FOLDER]
 
 Go to http://medicaldecathlon.com/ for downloading the data
 (Task08_HepaticVessel.tar).
@@ -63,7 +63,6 @@ def sort_folders(path, suffs):
         print(f"Old file path: {full_file_path}")
         new_file_path = os.path.join(new_folder_path, file)
         print(f"New file path: {new_file_path}")
-        # print(f"Moving {full_file_path} to {new_file_path}")
         os.rename(full_file_path, new_file_path)
 
 
@@ -74,9 +73,7 @@ if __name__ == "__main__":
     input_path = os.path.expanduser(sys.argv[1])
     if input_path.endswith('.tar'):
         print(f"Extracting {input_path}...")
-        #tar = tarfile.open(input_path)
         extr_folder = os.path.split(input_path)[0]
-        #tar.extractall(path=extr_folder)
 
         with tarfile.open(name=input_path) as tar:
             for member in tqdm(iterable=tar.getmembers(),

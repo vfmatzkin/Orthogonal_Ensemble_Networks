@@ -53,7 +53,7 @@ def build_data_generator(path, batch_size, n_classes=None, classes=None):
             del archive
             assert len(images) == 1024 or len(images) == 1
 
-            if n_classes > 1:
+            if n_classes > 2:
                 labels = one_hot_labels(labels, n_classes, classes)
 
             for i in range(0, len(images), batch_size):
@@ -71,14 +71,21 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
     batch_size = parser["TRAIN"].getint("batch_size")
     epochs = parser["TRAIN"].getint("epochs")
     input_channels = parser["TRAIN"].getint("input_channels")
+    model_no = 'model_{}'.format(model)
+
+    # out_channels counts the background
     out_channels = parser["TRAIN"].getint("output_channels") if \
         parser['TRAIN']['output_channels'] != '' else None
-    model_no = 'model_{}'.format(model)
+
+    # In binary problems just analyze background
+    out = 1 if out_channels == 2 else out_channels
+
     if 'labels' in parser['TRAIN']:  # labels='1,2,4' --> labels = [1, 2, 4]
         lab = parser['TRAIN']['labels']
         labels = list(map(int, lab.split(','))) if ',' in lab else lab
     else:
         labels = list(range(out_channels))  # out_ch=3 -> labels = [0,1,2]
+
     data_repetition = 1
     if 'data_repetition' in parser['TRAIN']:
         data_repetition = parser['TRAIN'].getfloat('data_repetition')
@@ -133,7 +140,7 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
         x, y = xy
         with tf.GradientTape() as tape:
             segmentation = unet(x)
-            loss_reconstruction = dice_loss(y, segmentation, out_channels)
+            loss_reconstruction = dice_loss(y, segmentation, out)
             final_loss = loss_reconstruction
 
             self_orthogonal_loss, inter_orthogonal_loss = 0, 0
@@ -156,8 +163,8 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
     def val_on_batch(xgt):
         x, gt = xgt
         segmentation = unet(x)
-        loss = dice_loss(gt, segmentation, out_channels)
-        dc = dice_coefficient(gt, segmentation, out_channels)
+        loss = dice_loss(gt, segmentation, out)
+        dc = dice_coefficient(gt, segmentation, out)
         return loss, dc
 
     train_dir = os.path.join(patches_directory, 'train')
