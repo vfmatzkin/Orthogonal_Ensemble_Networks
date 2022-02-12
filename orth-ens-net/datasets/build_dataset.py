@@ -27,7 +27,7 @@ IMPORTANT: Images in [SOURCE_DIR] must be organized in the following way:
 """
 
 DATASET_NAMES = ['Ultrecht', 'Amsterdam', 'Singapore', 'miccaibrats',
-                 'hepaticvessel']
+                 'hepaticvessel', 'lung']
 avail = f"""Available datasets are: {', '.join(DATASET_NAMES)}."""
 
 SUFFIXES = {'miccaibrats':
@@ -36,6 +36,9 @@ SUFFIXES = {'miccaibrats':
                       '_t2.nii.gz'],
                  'labels': ['_seg.nii.gz']},
             'hepaticvessel':
+                {'images': ['_ct.nii.gz'],
+                 'labels': ['_seg.nii.gz']},
+            'lung':
                 {'images': ['_ct.nii.gz'],
                  'labels': ['_seg.nii.gz']},
             }
@@ -330,7 +333,7 @@ def generate_dataset_3d(path: str, folders_pati: list, patches_dir: str,
                         normalization: bool, flipping: bool, fixed_range: list,
                         depth_crop: list, shape_with_padding: int,
                         dataset: str = 'miccaibrats',
-                        images_per_file: int = 1024, batch_size: int = 20):
+                        images_per_file: int = 1024, batch_size: int = 15):
     """ Generate 3D dataset
 
     Given a set of images, convert them from .nii.gz to numpy array patches,
@@ -550,7 +553,7 @@ def generate_train_val(dataset: Dataset, flipping: bool = False,
 
 def build_dataset(orig_dir: str, patches_dir: str,
                   dataset: str = 'miccaibrats', ims_file: int = 1024,
-                  batch_size: int = 20):
+                  batch_size: int = 5):
     """ Build dataset wrapper func.
 
     :param orig_dir: Input folder. Contains subfolders with the images.
@@ -599,9 +602,7 @@ if __name__ == "__main__":
         os.makedirs(patches_directory, exist_ok=True)
         print(f"Patches dir not set. Setting it as: {patches_directory}.")
 
-    if dataset_name == 'brats':
-        build_dataset(origin_directory, patches_directory)
-    elif dataset_name == 'hepaticvessel':
-        build_dataset(origin_directory, patches_directory, 'hepaticvessel')
-    else:
-        raise AttributeError(f"Dataset processing not implemented yet.")
+    if dataset_name not in DATASET_NAMES:
+        raise AttributeError(f"Dataset {dataset_name} processing not "
+                             f"implemented yet.")
+    build_dataset(origin_directory, patches_directory, dataset_name)
