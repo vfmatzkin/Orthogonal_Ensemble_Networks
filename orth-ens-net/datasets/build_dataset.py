@@ -43,6 +43,8 @@ SUFFIXES = {'miccaibrats':
                  'labels': ['_seg.nii.gz']},
             }
 
+BATCH_SIZE = {'lung': 5}
+
 
 class Normalization:
     def __init__(self, method, background_value=None):
@@ -553,7 +555,7 @@ def generate_train_val(dataset: Dataset, flipping: bool = False,
 
 def build_dataset(orig_dir: str, patches_dir: str,
                   dataset: str = 'miccaibrats', ims_file: int = 1024,
-                  batch_size: int = 5):
+                  batch_size: int = 20):
     """ Build dataset wrapper func.
 
     :param orig_dir: Input folder. Contains subfolders with the images.
@@ -591,6 +593,8 @@ if __name__ == "__main__":
     origin_directory = sys.argv[2] if nargs >= 3 else None
     patches_directory = sys.argv[3] if nargs >= 4 else None
 
+    batch_size = BATCH_SIZE[dataset_name] if dataset_name in BATCH_SIZE else 20
+
     if not os.path.exists(origin_directory):
         raise FileNotFoundError(f"The origin directory does not exist "
                                 f"({origin_directory}).")
@@ -605,4 +609,5 @@ if __name__ == "__main__":
     if dataset_name not in DATASET_NAMES:
         raise AttributeError(f"Dataset {dataset_name} processing not "
                              f"implemented yet.")
-    build_dataset(origin_directory, patches_directory, dataset_name)
+    build_dataset(origin_directory, patches_directory, dataset_name,
+                  batch_size)

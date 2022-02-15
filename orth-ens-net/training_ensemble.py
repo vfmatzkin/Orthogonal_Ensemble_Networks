@@ -10,6 +10,7 @@ import tensorflow as tf
 
 from ResUNet_model import build_network
 from utils import save_model, load_model, one_hot_labels
+tf.get_logger().setLevel('ERROR')
 
 os.chdir(os.path.dirname(os.path.realpath(__file__)))  # Change working dir
 parser = ConfigParser()
@@ -72,6 +73,10 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
     epochs = parser["TRAIN"].getint("epochs")
     input_channels = parser["TRAIN"].getint("input_channels")
     model_no = 'model_{}'.format(model)
+
+    save_logits = False  # For compatibility
+    if 'save_logits' in parser["TRAIN"]:
+        save_logits = parser["TRAIN"].getboolean("save_logits")
 
     # out_channels counts the background
     out_channels = parser["TRAIN"].getint("output_channels") if \
@@ -139,7 +144,7 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
     def train_on_batch(xy):
         x, y = xy
         with tf.GradientTape() as tape:
-            segmentation = unet(x)
+            segmentation = unet(x)[0] if save_logits else unet(x)
             loss_reconstruction = dice_loss(y, segmentation, out)
             final_loss = loss_reconstruction
 
@@ -162,7 +167,7 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
     @tf.function
     def val_on_batch(xgt):
         x, gt = xgt
-        segmentation = unet(x)
+        segmentation = unet(x)[0] if save_logits else unet(x)
         loss = dice_loss(gt, segmentation, out)
         dc = dice_coefficient(gt, segmentation, out)
         return loss, dc
@@ -174,7 +179,7 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
     val_generator = build_data_generator(val_dir, batch_size, out_channels,
                                          labels)
 
-    inputs, outputs = build_network(input_channels, out_channels)
+    inputs, outputs = build_network(input_channels, out_channels, save_logits)
     unet = tf.keras.Model(inputs, outputs)
     unet.summary()
     optimizer = tf.keras.optimizers.Adam(lr=initial_learning_rate)

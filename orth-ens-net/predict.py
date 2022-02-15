@@ -1,7 +1,13 @@
+import math
+import os
 import sys
-
-from utils import *
 from configparser import ConfigParser
+
+import nibabel as nib
+import numpy as np
+from nibabel import load as load_nii
+from utils import load_model, add_padding_z, add_padding_x, add_padding_y, \
+    ensure_dir
 
 
 def z_scores_normalization(img):
@@ -11,7 +17,11 @@ def z_scores_normalization(img):
 
 def load_and_predict_raw_image(hold_out_images, model_name, model_fold,
                                normalization_function=None):
-    model = load_model(os.path.join(models_directory, model_fold, model_name))
+    model_path = os.path.join(models_directory, model_fold, model_name)
+    if not os.path.exists(model_path):
+        print(f"MODEL {model_path} not found. Skipping...")
+        return
+    model = load_model(model_path)
 
     for filename in hold_out_images:
         filename = filename.strip('\n')
@@ -120,8 +130,8 @@ if __name__ == "__main__":
     model_folds = parser['ENSEMBLE'].get('pretrained_models_folds').split(",")
     n_models = parser['ENSEMBLE'].getint('n_models')
 
-    text_file = parser['DEFAULT'].get('hold_out_data')
-    hold_out_file = open(text_file, "r")
+    hold_out_txt = parser['DEFAULT'].get('hold_out_data')
+    hold_out_file = open(hold_out_txt, "r")
     hold_out_images = hold_out_file.read().split(' ')
 
     for model_fold in model_folds:
