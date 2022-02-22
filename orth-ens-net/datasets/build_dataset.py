@@ -232,7 +232,7 @@ def write_files_metadata(dataset: Dataset, train_paths: list, val_paths: list,
     """
     print('-------> Writing files to metadata:............................. ')
     metadata_file = os.path.join(dataset.patches_directory,
-                                 "../../metadata_files.txt")
+                                 "metadata_files.txt")
     os.makedirs(os.path.dirname(metadata_file), exist_ok=True)
 
     f = open(metadata_file, "w")
@@ -345,7 +345,7 @@ def generate_dataset_3d(path: str, folders_pati: list, patches_dir: str,
     :param folders_pati: List of patient folders name.
     :param patches_dir: Output patches directory.
     :param metadata_fil: Filename of the metadata.
-    :param subdirname: Name of the split subfolder.
+    :param subdirname: Name of the split imgs_paths.
     :param normalization: Apply normalization.
     :param flipping: Apply flipping.
     :param fixed_range: If given, apply normalization to the supplied range.

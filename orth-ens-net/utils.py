@@ -29,8 +29,7 @@ def load_model(model_name_input='model'):
 
 
 def ensure_dir(directory):
-    if not os.path.exists(directory):
-        os.makedirs(directory)
+    os.makedirs(directory, exist_ok=True)
 
 
 def add_padding_z(img, depth_with_padding):
