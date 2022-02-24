@@ -1,3 +1,4 @@
+import csv
 import os
 import random
 import sys
@@ -231,19 +232,21 @@ def write_files_metadata(dataset: Dataset, train_paths: list, val_paths: list,
     :return:
     """
     print('-------> Writing files to metadata:............................. ')
-    metadata_file = os.path.join(dataset.patches_directory,
-                                 "metadata_files.txt")
-    os.makedirs(os.path.dirname(metadata_file), exist_ok=True)
+    metd_file = os.path.join(dataset.patches_directory, 'metadata_files.txt')
+    ho_file = os.path.join(dataset.patches_directory, 'hold_out_files.txt')
+    os.makedirs(os.path.dirname(metd_file), exist_ok=True)
 
-    f = open(metadata_file, "w")
-    for (name, paths) in [("train_paths", train_paths),
-                          ("val_paths", val_paths),
-                          ("hold_out_paths", hold_out_paths)]:
-        f.write(name + ": \n")
-        for elem in paths:
-            f.write(elem + " ")
-        f.write("\n")
+    f = open(metd_file, 'w')
+    for (name, paths) in [('train_paths', train_paths),
+                          ('val_paths', val_paths),
+                          ('hold_out_paths', hold_out_paths)]:
+        f.write(name + ': \n')
+        f.write(' '.join(paths))
+        f.write('\n')
     f.close()
+    with open(ho_file, 'w') as f:
+        f.write(' '.join(hold_out_paths))
+        f.write('\n')
 
 
 def generate_npz_files(im_ptchs: dict, lbl_ptchs: dict, full_dirname: str,
@@ -485,7 +488,8 @@ def generate_train_val(dataset: Dataset, flipping: bool = False,
                        normalization: bool = False,
                        produce_hold_out: bool = True, fixed_range: list = (),
                        depth_crop: list = (), shape_with_padding: bool = None,
-                       images_per_file: int = 1024, batch_size: int = 20):
+                       images_per_file: int = 1024, batch_size: int = 20,
+                       metadata_file=None):
     """ Split the patients in train/val/holdout and produce the patches.
 
     :param dataset: Name of the dataset. Must be listed in DATASET_NAMES.
@@ -500,35 +504,51 @@ def generate_train_val(dataset: Dataset, flipping: bool = False,
     :param batch_size: Simultaneously subject images/patches loaded in RAM. A
     bigger number will cause more RAM usage (In hepaticvessel, a size of 20
     uses approximately 15GB of RAM).
+    :param metadata_file: Use an already existing metadata_files.txt
     :return:
     """
     print('Training and validation path: ', dataset.origin_directory)
     path = dataset.origin_directory
+    if metadata_file and os.path.exists(metadata_file):
+        with open(metadata_file, newline='') as f:
+            reader = csv.reader(f)
+            files_all = list(reader)
+        if not len(files_all) == 6:
+            raise AssertionError(f'The metadata file must contain 6 rows, '
+                                 f'train_paths, val_paths, hold_out_paths '
+                                 f'and the corresponding subject names below'
+                                 f'each title.')
+        train_paths = files_all[1][0].strip().split(' ')
+        val_paths = files_all[3][0].strip().split(' ')
+        hold_out_paths = files_all[5][0].strip().split(' ')
+        n_train = len(train_paths)
+        n_val = len(train_paths)
+    else:
+        files = dataset.image_files
+        random.shuffle(files)
 
-    files = dataset.image_files
-    random.shuffle(files)
+        n_train_val = int(min(len(files) * 0.8, dataset.n_images))
+        n_val = round(n_train_val * 0.06)
+        print('---------------------------------n_train_val: ', n_train_val)
 
-    n_train_val = int(min(len(files) * 0.8, dataset.n_images))
-    n_val = round(n_train_val * 0.06)
-    print('---------------------------------n_train_val: ', n_train_val)
+        if produce_hold_out:
+            # In case of producing hold out (the rest of the imgs, 15% min)
+            n_hold_out = max(round(len(files) * 0.2),
+                             (len(files) - n_train_val))
+            n_train = n_train_val - n_val
+            val_paths = files[0:n_val]
+            hold_out_paths = files[n_val:n_hold_out + n_val]
+            train_paths = files[-n_train:]
+            assert (val_paths + train_paths + hold_out_paths).sort() == \
+                   files.sort()
+        else:  # In case of not producing hold out
+            n_train = n_train_val - n_val
+            hold_out_paths = []
+            train_paths = files[0:n_train]
+            val_paths = files[n_train:]
 
-    if produce_hold_out:
-        # In case of producing hold out (the rest of the imgs, 15% min)
-        n_hold_out = max(round(len(files) * 0.2), (len(files) - n_train_val))
-        n_train = n_train_val - n_val
-        val_paths = files[0:n_val]
-        hold_out_paths = files[n_val:n_hold_out + n_val]
-        train_paths = files[-n_train:]
-        assert (val_paths + train_paths + hold_out_paths).sort() == \
-               files.sort()
-    else:  # In case of not producing hold out
-        n_train = n_train_val - n_val
-        hold_out_paths = []
-        train_paths = files[0:n_train]
-        val_paths = files[n_train:]
-
-    print('Writing files to metadata')
-    write_files_metadata(dataset, train_paths, val_paths, hold_out_paths)
+        print('Writing files to metadata')
+        write_files_metadata(dataset, train_paths, val_paths, hold_out_paths)
 
     if n_val == 0:
         print("Not enough images to produce validation batches. Be sure to "
@@ -555,7 +575,7 @@ def generate_train_val(dataset: Dataset, flipping: bool = False,
 
 def build_dataset(orig_dir: str, patches_dir: str,
                   dataset: str = 'miccaibrats', ims_file: int = 1024,
-                  batch_size: int = 20):
+                  batch_size: int = 20, metd_file=None):
     """ Build dataset wrapper func.
 
     :param orig_dir: Input folder. Contains subfolders with the images.
@@ -565,10 +585,12 @@ def build_dataset(orig_dir: str, patches_dir: str,
     :param batch_size: Amount of subjects used when loading images. A bigger
     number will cause more RAM usage (In hepaticvessel, a size of 20 uses
     approximately 15GB of RAM).
+    :param metd_file: Previously created metadata_file.txt
     :return:
     """
     generate_train_val(Dataset(dataset, orig_dir, patches_dir),
-                       images_per_file=ims_file, batch_size=batch_size)
+                       images_per_file=ims_file, batch_size=batch_size,
+                       metadata_file=metd_file)
 
 
 if __name__ == "__main__":
@@ -579,27 +601,25 @@ if __name__ == "__main__":
         print(avail)
         sys.exit(0)
 
-    if nargs == 1:  # Default directories (no args given, kept for compatib.)
-        origin_directory = "./datasets_raw/MICCAI_BraTS2020_TrainingData"
-        patches_directory = "patches_brats_marzoII/miccaibrats"
-        dataset_name = 'brats'
-        default_msg = 'No args provided. Continue with default values? ' \
-                      f'[ORIG_DIR]: "{origin_directory}" ' \
-                      f'[PATCH_DIR]: "{patches_directory}"  '
-        if not click.confirm(default_msg, default=True):
-            sys.exit(0)
+    metd_file = None
+    if nargs == 5:
+        metd_file = sys.argv[4]
+
+    if os.path.exists(sys.argv[1]) and sys.argv[1] not in DATASET_NAMES:
+        raise AttributeError(f"The first parameter looks like a path, but it "
+                             f"must be a dataset name. {avail}")
 
     dataset_name = sys.argv[1].lower() if nargs >= 2 else None
     origin_directory = sys.argv[2] if nargs >= 3 else None
     patches_directory = sys.argv[3] if nargs >= 4 else None
 
     batch_size = BATCH_SIZE[dataset_name] if dataset_name in BATCH_SIZE else 20
+    imgs_per_file = 1024
 
     if not os.path.exists(origin_directory):
         raise FileNotFoundError(f"The origin directory does not exist "
                                 f"({origin_directory}).")
     if not dataset_name:
-        avail = ', '.join(DATASET_NAMES)
         raise AttributeError(f"You must enter a valid dataset type ({avail}).")
     if not patches_directory:
         patches_directory = os.path.join(origin_directory, 'im_ptchs')
@@ -608,6 +628,7 @@ if __name__ == "__main__":
 
     if dataset_name not in DATASET_NAMES:
         raise AttributeError(f"Dataset {dataset_name} processing not "
-                             f"implemented yet.")
+                             f"implemented yet. Available datasets are: "
+                             f"{avail}")
     build_dataset(origin_directory, patches_directory, dataset_name,
-                  batch_size)
+                  imgs_per_file, batch_size, metd_file)
