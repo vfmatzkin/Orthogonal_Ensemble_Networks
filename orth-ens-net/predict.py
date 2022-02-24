@@ -102,7 +102,7 @@ def load_and_predict_raw_image(subjects, model_n, fold, normalization_fn=None,
 
         y_pred = model.predict(all_modalities_joined, batch_size=1)
         if has_logits:
-            if not type(y_pred) == tuple:
+            if not type(y_pred) == list:
                 print("Expected logits with output, but got only predictions."
                       " Setting save_logits to False.")
                 has_logits = False
@@ -115,17 +115,20 @@ def load_and_predict_raw_image(subjects, model_n, fold, normalization_fn=None,
 
         y_pred = y_pred.astype(float)[0]  # (1, x, y, z, c) -> (x, y, z, c)
         if y_pred.shape[3] > 1:
-            output_img = argmax(y_pred)  # TODO check if argmax is appropiate in multiclass
+            mask_img = argmax(y_pred)
         else:
-            output_img = np.array(y_pred >= 0.5).astype(float)[:, :, :, 0]
+            mask_img = np.array(y_pred >= 0.5).astype(float)[:, :, :, 0]
         if has_logits:
-            output_logits = logits.astype(float)[0]
+            logits_img = logits.astype(float)[0]
 
         ensure_dir(save_folder)
-        nib.save(nib.Nifti1Image(output_img, None, header_info),
-                 f"{save_folder}/_prediction.nii.gz")
+        nib.save(nib.Nifti1Image(y_pred, None, header_info),
+                 f"{save_folder}/{dat_name}_prediction.nii.gz")
+
+        nib.save(nib.Nifti1Image(mask_img, None, header_info),
+                 f"{save_folder}/{dat_name}_mask.nii.gz")
         if has_logits:
-            nib.save(nib.Nifti1Image(output_logits, None, header_info),
+            nib.save(nib.Nifti1Image(logits_img, None, header_info),
                      f"{save_folder}/{dat_name}_logits.nii.gz")
 
 

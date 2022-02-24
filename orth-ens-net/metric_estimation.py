@@ -68,9 +68,9 @@ def load_segmentation(case_folder, subject_id, gt=False):
         prediction_image = nib.load(prediction_file)
         prediction = prediction_image.get_fdata()
         print('Loading')
-        return prediction[:, :, :, 0]
+        return prediction
     else:
-        gt_file = "{}{}/wmh.nii.gz".format(case_folder, subject_id)
+        gt_file = "{}/{}/wmh.nii.gz".format(case_folder, subject_id)
         gt_image = nib.load(gt_file)
         gt = gt_image.get_fdata()
         gt = set2to0(gt)
@@ -143,14 +143,12 @@ def str2net(v):
 
 def testing_models(metrics, model_fold, n_models, folder, save_results_fold):
     for metric in metrics:
-
         if metric == 'dice':
             header = ["dice"]
         elif metric == 'brier_plus':
             header = ["brier_plus"]
         elif metric == 'brier':
             header = ["brier"]
-
 
         else:
             raise SystemExit("The metric does not exist")
@@ -173,7 +171,7 @@ def testing_models(metrics, model_fold, n_models, folder, save_results_fold):
                 if metric == 'dice':
                     hard_dice = [dice_coefficient(
                         load_segmentation(gt_directory, subject_id, True),
-                        load_segmentation(case_folder, subject_id))]
+                        load_segmentation(case_folder, subject_id, True))]
                     print('Hard_dice_anatomic: ', hard_dice)
                     rows.append(hard_dice)
                 elif metric == 'brier_plus':
@@ -194,14 +192,15 @@ def testing_models(metrics, model_fold, n_models, folder, save_results_fold):
             model_mean.append(df.mean())
         df_means = pd.DataFrame.from_records(model_mean, columns=header,
                                              index=model_names)
-        df_means.to_csv(os.path.join(save_results_fold, model_fold,
+        ho_folder = os.path.join(save_results_fold, model_fold)
+        os.makedirs(ho_folder, exist_ok=True)
+        df_means.to_csv(os.path.join(ho_folder,
                                      'mean_' + metric + '_model.csv'))
 
 
 def testing_ensemble(Nnet, kcross, metrics, model_fold, n_models, folder,
                      save_results_fold):
     for metric in metrics:
-
         if metric == 'dice':
             header = ["dice"]
         elif metric == 'brier_plus':
@@ -210,7 +209,6 @@ def testing_ensemble(Nnet, kcross, metrics, model_fold, n_models, folder,
             header = ["brier"]
         elif metric == 'variance':
             header = ["variance"]
-
         else:
             raise SystemExit("The metric does not exist")
 
@@ -297,7 +295,6 @@ if __name__ == "__main__":
     kcross = parser["TEST"].getint('kcross')
 
     for model_fold in model_folds:
-
         testing_models(metrics, model_fold, n_models, folder,
                        save_results_fold)
         for Nnet in Nnets:
