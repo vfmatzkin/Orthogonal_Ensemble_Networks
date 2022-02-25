@@ -4,7 +4,6 @@ import random
 import sys
 from typing import Tuple
 
-import click
 import numpy as np
 from nibabel import load as load_nii
 
@@ -47,23 +46,13 @@ SUFFIXES = {'miccaibrats':
 BATCH_SIZE = {'lung': 5}
 
 
-class Normalization:
-    def __init__(self, method, background_value=None):
-        if method == "z_scores":
-            self.takes_mask = False
-            self.method = z_scores_normalization
+def z_scores_normalization(img):
+    print("Normalizing with z-scores...", np.shape(img))
+    img = (img - np.mean(img)) / np.std(img)
+    return img
 
-        elif method == "mask_filter_and_z_scores":
-            assert background_value is not None
-            self.takes_mask = True
-            self.method = mask_filter_and_z_scores(background_value)
 
-        elif method == "min_max":
-            self.takes_mask = False
-            self.method = min_max_normalization
-
-        else:
-            raise RuntimeError("Unknown normalization method.")
+NORMALIZATION = {'all': z_scores_normalization}
 
 
 class Dataset:
@@ -114,12 +103,6 @@ def mask_filter_and_z_scores(background_value):
         return img
 
     return mask_filter_and_z_scores_background_set
-
-
-def z_scores_normalization(img):
-    print("Normalizing with z-scores...", np.shape(img))
-    img = (img - np.mean(img)) / np.std(img)
-    return img
 
 
 def min_max_normalization(img):
@@ -334,10 +317,9 @@ def generate_npz_files(im_ptchs: dict, lbl_ptchs: dict, full_dirname: str,
 
 
 def generate_dataset_3d(path: str, folders_pati: list, patches_dir: str,
-                        metadata_fil: str, subdirname: str,
-                        normalization: bool, flipping: bool, fixed_range: list,
-                        depth_crop: list, shape_with_padding: int,
-                        dataset: str = 'miccaibrats',
+                        metadata_fil: str, subdirname: str, flipping: bool,
+                        fixed_range: list, depth_crop: list,
+                        shape_with_padding: int, dataset: str = 'miccaibrats',
                         images_per_file: int = 1024, batch_size: int = 15):
     """ Generate 3D dataset
 
@@ -349,7 +331,6 @@ def generate_dataset_3d(path: str, folders_pati: list, patches_dir: str,
     :param patches_dir: Output patches directory.
     :param metadata_fil: Filename of the metadata.
     :param subdirname: Name of the split imgs_paths.
-    :param normalization: Apply normalization.
     :param flipping: Apply flipping.
     :param fixed_range: If given, apply normalization to the supplied range.
     :param depth_crop: If given, crop the last dimension of the 3D image in the
@@ -387,20 +368,22 @@ def generate_dataset_3d(path: str, folders_pati: list, patches_dir: str,
                 print('------>', opened_file)
                 imgs[suff_i] = np.asanyarray(load_nii(opened_file).get_fdata())
 
-        for suff, img in imgs.items():  # For each image
+        for suff in imgs.keys():  # For each image
             # Apply preprocessing
             if depth_crop:
                 (depth_start, depth_end) = depth_crop
                 print(f"Cropping depth of MRI by: [{depth_start},{depth_end}]")
-                imgs[suff] = img[:, :, depth_start:depth_end]
+                imgs[suff] = imgs[suff][:, :, depth_start:depth_end]
 
-            if normalization:  # Call a Normalization instance?
-                ...
+                if 'all' in NORMALIZATION:
+                    imgs[suff] = NORMALIZATION['all'](imgs[suff])
+                if dataset in NORMALIZATION:
+                    imgs[suff] = NORMALIZATION[dataset](imgs[suff])
 
             if shape_with_padding:
                 print(f"Adding padding to the first two coordinates by: "
                       f"[{shape_with_padding}]")
-                imgs[suff] = add_padding(img, shape_with_padding)
+                imgs[suff] = add_padding(imgs[suff], shape_with_padding)
 
             if fixed_range:
                 # Define fixed_range as follows:
@@ -409,13 +392,14 @@ def generate_dataset_3d(path: str, folders_pati: list, patches_dir: str,
                 if suff in fixed_range:
                     min_rng, max_rng = fixed_range[suff]
                     print(f"Fixing range to [{min_rng}, {max_rng}]")
-                    imgs[suff] = 2. * (img - min_rng) / (max_rng - min_rng) - 1
+                    imgs[suff] = 2. * (imgs[suff] - min_rng) / \
+                                 (max_rng - min_rng) - 1
 
             # Apply augmentation
             if flipping:
                 print('Data augmentation: flipping')
                 axis_to_flip = 2
-                imgs[suff] = np.flip(img, axis_to_flip)
+                imgs[suff] = np.flip(imgs[suff], axis_to_flip)
 
             # Generate im_ptchs
             print(f"Generating im_ptchs for image {folder}")
@@ -426,7 +410,7 @@ def generate_dataset_3d(path: str, folders_pati: list, patches_dir: str,
             ptch_im, ptch_lb = generate_patches(imgs, label_id=label_id)
 
             print("Patches per class: ")
-            for p_class, images in ptch_im.items():  # Images
+            for p_class in ptch_im.keys():  # Images
                 print(f"class{p_class} im_ptchs obtained: {len(images)}.")
 
                 if p_class not in n_patches:  # Update n_patches dict
@@ -485,7 +469,6 @@ def generate_dataset_3d(path: str, folders_pati: list, patches_dir: str,
 
 
 def generate_train_val(dataset: Dataset, flipping: bool = False,
-                       normalization: bool = False,
                        produce_hold_out: bool = True, fixed_range: list = (),
                        depth_crop: list = (), shape_with_padding: bool = None,
                        images_per_file: int = 1024, batch_size: int = 20,
@@ -494,7 +477,6 @@ def generate_train_val(dataset: Dataset, flipping: bool = False,
 
     :param dataset: Name of the dataset. Must be listed in DATASET_NAMES.
     :param flipping: Apply flipping.
-    :param normalization: Apply normalization.
     :param produce_hold_out: Produce holdout split.
     :param fixed_range: If given, apply normalization to the supplied range.
     :param depth_crop: If given, crop the last dimension of the 3D image in the
@@ -557,19 +539,17 @@ def generate_train_val(dataset: Dataset, flipping: bool = False,
     else:
         print("Generating val dataset...")
         generate_dataset_3d(path, val_paths, dataset.patches_directory,
-                            "metadata_val.txt", "val", normalization,
-                            flipping, fixed_range, depth_crop,
-                            shape_with_padding, dataset.name,
+                            "metadata_val.txt", "val", flipping, fixed_range,
+                            depth_crop, shape_with_padding, dataset.name,
                             images_per_file, min(n_val, batch_size))
         print(f"Finished creating val dataset on {dataset.patches_directory}.")
 
     # ===== We generate train and val datasets
     print("Generating train dataset...")
     generate_dataset_3d(path, train_paths, dataset.patches_directory,
-                        "metadata_train.txt", "train", normalization,
-                        flipping, fixed_range, depth_crop, shape_with_padding,
-                        dataset.name, images_per_file, min(n_train,
-                                                           batch_size))
+                        "metadata_train.txt", "train", flipping, fixed_range,
+                        depth_crop, shape_with_padding, dataset.name,
+                        images_per_file, min(n_train, batch_size))
     print(f"Finished creating train dataset on {dataset.patches_directory}.")
 
 

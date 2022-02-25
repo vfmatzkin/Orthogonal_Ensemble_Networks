@@ -4,12 +4,16 @@ from configparser import ConfigParser
 from glob import glob
 from random import shuffle
 
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+
 import keras.backend as K
 import numpy as np
 import tensorflow as tf
+from keras.activations import sigmoid, softmax
 
 from ResUNet_model import build_network
 from utils import save_model, load_model, one_hot_labels
+
 tf.get_logger().setLevel('ERROR')
 
 os.chdir(os.path.dirname(os.path.realpath(__file__)))  # Change working dir
@@ -73,10 +77,6 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
     epochs = parser["TRAIN"].getint("epochs")
     input_channels = parser["TRAIN"].getint("input_channels")
     model_no = 'model_{}'.format(model)
-
-    save_logits = False  # For compatibility
-    if 'save_logits' in parser["TRAIN"]:
-        save_logits = parser["TRAIN"].getboolean("save_logits")
 
     # out_channels counts the background
     out_channels = parser["TRAIN"].getint("output_channels") if \
@@ -144,7 +144,11 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
     def train_on_batch(xy):
         x, y = xy
         with tf.GradientTape() as tape:
-            segmentation = unet(x)[0] if save_logits else unet(x)
+            logits = unet(x)
+
+            activation = sigmoid if out_channels == 2 else softmax
+            segmentation = activation(logits)
+
             loss_reconstruction = dice_loss(y, segmentation, out)
             final_loss = loss_reconstruction
 
@@ -167,7 +171,11 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
     @tf.function
     def val_on_batch(xgt):
         x, gt = xgt
-        segmentation = unet(x)[0] if save_logits else unet(x)
+        logits = unet(x)
+
+        act = sigmoid if out_channels == 2 else softmax
+        segmentation = act(logits)
+
         loss = dice_loss(gt, segmentation, out)
         dc = dice_coefficient(gt, segmentation, out)
         return loss, dc
@@ -179,7 +187,7 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
     val_generator = build_data_generator(val_dir, batch_size, out_channels,
                                          labels)
 
-    inputs, outputs = build_network(input_channels, out_channels, save_logits)
+    inputs, outputs = build_network(input_channels, out_channels)
     unet = tf.keras.Model(inputs, outputs)
     unet.summary()
     optimizer = tf.keras.optimizers.Adam(lr=initial_learning_rate)
@@ -280,10 +288,14 @@ if __name__ == "__main__":
     ini_file = sys.argv[1]
     parser.read(ini_file)
 
+    workspace_dir = parser['DEFAULT'].get('workspace_dir')
     dataset_name = parser["ENSEMBLE"].get("dataset")
-    patches_directory = parser["DEFAULT"].get("patches_directory")
-    models_directory = parser["DEFAULT"].get("models_directory")
-    logs_directory = parser["DEFAULT"].get("logs_directory")
+    patches_directory = parser["DEFAULT"].get("patches_directory").replace(
+        '%workspace', workspace_dir)
+    models_directory = parser["DEFAULT"].get("models_directory").replace(
+        '%workspace', workspace_dir)
+    logs_directory = parser["DEFAULT"].get("logs_directory").replace(
+        '%workspace', workspace_dir)
 
     if os.path.isdir(patches_directory):
         print('patches directory: ', patches_directory)

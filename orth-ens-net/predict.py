@@ -12,6 +12,7 @@ from nibabel import load as load_nii
 from utils import load_model, add_padding_z, add_padding_x, add_padding_y, \
     ensure_dir
 from tensorflow.keras.backend import argmax
+from keras.activations import sigmoid, softmax
 
 
 def z_scores_normalization(img):
@@ -100,7 +101,11 @@ def load_and_predict_raw_image(subjects, model_n, fold, normalization_fn=None,
         all_modalities_joined = np.moveaxis(all_modalities_joined, 0, -1)
         all_modalities_joined = np.expand_dims(all_modalities_joined, 0)
 
-        y_pred = model.predict(all_modalities_joined, batch_size=1)
+        logits = model.predict(all_modalities_joined, batch_size=1)
+
+        activation = sigmoid if out_channels == 2 else softmax
+        y_pred = activation(logits)
+
         if has_logits:
             if not type(y_pred) == list:
                 print("Expected logits with output, but got only predictions."
@@ -141,26 +146,30 @@ if __name__ == "__main__":
     parser = ConfigParser()
     parser.read(ini_file)
 
-    origin_directory = parser['DEFAULT'].get('image_source_dir')
-    segmentation_directory = parser['DEFAULT'].get('segmentation_directory')
-    models_directory = parser['DEFAULT'].get('models_directory')
+    workspace_dir = parser['DEFAULT'].get('workspace_dir')
+    origin_directory = parser['DEFAULT'].get('image_source_dir').replace(
+        '%workspace', workspace_dir)
+    segmentation_directory = parser['DEFAULT'].get(
+        'segmentation_directory').replace('%workspace', workspace_dir)
+    models_directory = parser['DEFAULT'].get('models_directory').replace(
+        '%workspace', workspace_dir)
     model_folds = parser['ENSEMBLE'].get('pretrained_models_folds').split(",")
     n_models = parser['ENSEMBLE'].getint('n_models')
     name = parser['ENSEMBLE'].get('dataset')
 
-    images = None if 'images' not in parser['TEST'] \
-        else parser['TEST'].get('images').split(',')
-    imgs_paths = None if 'imgs_paths' not in parser['TEST'] \
-        else parser['TEST'].get('imgs_paths')
+    images = parser['TEST'].get('images').split(',')
+    imgs_paths = parser['TEST'].get('imgs_paths').replace('%workspace',
+                                                          workspace_dir)
 
-    norm = None if 'normalization' not in parser['TEST'] \
-        else parser['TEST'].get('normalization')
+    out_channels = parser['TRAIN'].getint('output_channels')
+
+    norm = parser['TEST'].get('normalization')
     normalization = NORMALIZATION[norm] if norm in NORMALIZATION else None
 
-    logits = None if 'save_logits' not in parser['TRAIN'] \
-        else parser['TRAIN'].get('save_logits').split(',')
+    logits = parser['TEST'].getboolean('save_logits')
 
-    hold_out_txt = parser['DEFAULT'].get('hold_out_data')
+    hold_out_txt = parser['DEFAULT'].get(
+        'hold_out_data').replace('%workspace', workspace_dir)
     hold_out_file = open(hold_out_txt, "r")
     hold_out_images = hold_out_file.read().split(' ')
 

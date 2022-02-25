@@ -1,9 +1,8 @@
 from tensorflow.keras.layers import Conv3D, MaxPooling3D, \
     Conv3DTranspose, Input, concatenate
-from keras.activations import sigmoid, softmax
 
 
-def build_network(input_channels, output_channels, save_logits=False):
+def build_network(input_channels, output_channels):
     inputs = Input((None, None, None, input_channels))
     conv1 = Conv3D(32, (3, 3, 3), activation='relu', padding='same')(inputs)
     conv1 = Conv3D(32, (3, 3, 3), activation='relu', padding='same')(conv1)
@@ -53,14 +52,7 @@ def build_network(input_channels, output_channels, save_logits=False):
     conv9 = Conv3D(32, (3, 3, 3), activation='relu', padding='same')(conv9)
     conc9 = concatenate([up9, conv9], axis=4)
 
-    act = sigmoid if output_channels == 2 else softmax
     out_ch = 1 if output_channels == 2 else output_channels
-
-    conv10 = Conv3D(out_ch, (1, 1, 1))(conc9)
-    logits = conv10 if save_logits else None
-    prediction = act(conv10)
-
-    if save_logits:
-        prediction = (prediction, logits)
+    prediction = Conv3D(out_ch, (1, 1, 1))(conc9)  # Just the logits
 
     return inputs, prediction

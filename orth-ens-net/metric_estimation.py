@@ -284,9 +284,13 @@ if __name__ == "__main__":
     parser = ConfigParser()
     parser.read(ini_file)
 
-    gt_directory = parser["DEFAULT"].get('image_source_dir')
-    folder = parser["DEFAULT"].get("segmentation_directory")
-    save_results_fold = parser["DEFAULT"].get("results_directory")
+    workspace_dir = parser['DEFAULT'].get('workspace_dir')
+    gt_directory = parser["DEFAULT"].get('image_source_dir').replace(
+        '%workspace', workspace_dir)
+    folder = parser["DEFAULT"].get("segmentation_directory").replace(
+        '%workspace', workspace_dir)
+    save_results_fold = parser["DEFAULT"].get("results_directory").replace(
+        '%workspace', workspace_dir)
     model_folds = parser["ENSEMBLE"].get("pretrained_models_folds").split(",")
     n_models = parser["ENSEMBLE"].getint("n_models")
 
