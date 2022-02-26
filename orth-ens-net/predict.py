@@ -11,7 +11,7 @@ import numpy as np
 from nibabel import load as load_nii
 from utils import load_model, add_padding_z, add_padding_x, add_padding_y, \
     ensure_dir
-from tensorflow.keras.backend import argmax
+import tensorflow.keras.backend as K
 from keras.activations import sigmoid, softmax
 
 
@@ -57,7 +57,7 @@ def unpad_pred(y_pred, orig_shape, pd_x, pd_y, pd_z):
 
 def load_and_predict_raw_image(subjects, model_n, fold, normalization_fn=None,
                                src_dir_path=None, im_types=None,
-                               path_structure=None, has_logits=False,
+                               path_structure=None, save_logits=False,
                                dat_name=None):
     model_path = os.path.join(models_directory, fold, model_n)
     if not os.path.exists(model_path + '.json'):
@@ -104,26 +104,18 @@ def load_and_predict_raw_image(subjects, model_n, fold, normalization_fn=None,
         logits = model.predict(all_modalities_joined, batch_size=1)
 
         activation = sigmoid if out_channels == 2 else softmax
-        y_pred = activation(logits)
-
-        if has_logits:
-            if not type(y_pred) == list:
-                print("Expected logits with output, but got only predictions."
-                      " Setting save_logits to False.")
-                has_logits = False
-            else:
-                y_pred, logits = y_pred
+        y_pred = activation(K.constant(logits)).numpy()
 
         y_pred = unpad_pred(y_pred, orig_shape, pd_x, pd_y, pd_z)
-        if has_logits:
+        if save_logits:
             logits = unpad_pred(logits, orig_shape, pd_x, pd_y, pd_z)
 
         y_pred = y_pred.astype(float)[0]  # (1, x, y, z, c) -> (x, y, z, c)
         if y_pred.shape[3] > 1:
-            mask_img = argmax(y_pred)
+            mask_img = K.argmax(y_pred)
         else:
             mask_img = np.array(y_pred >= 0.5).astype(float)[:, :, :, 0]
-        if has_logits:
+        if save_logits:
             logits_img = logits.astype(float)[0]
 
         ensure_dir(save_folder)
@@ -132,7 +124,7 @@ def load_and_predict_raw_image(subjects, model_n, fold, normalization_fn=None,
 
         nib.save(nib.Nifti1Image(mask_img, None, header_info),
                  f"{save_folder}/{dat_name}_mask.nii.gz")
-        if has_logits:
+        if save_logits:
             nib.save(nib.Nifti1Image(logits_img, None, header_info),
                      f"{save_folder}/{dat_name}_logits.nii.gz")
 

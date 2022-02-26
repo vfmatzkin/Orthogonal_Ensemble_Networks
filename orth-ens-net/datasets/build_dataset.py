@@ -43,7 +43,7 @@ SUFFIXES = {'miccaibrats':
                  'labels': ['_seg.nii.gz']},
             }
 
-BATCH_SIZE = {'lung': 5}
+BATCH_SIZE = {'lung': 4}
 
 
 def z_scores_normalization(img):
@@ -410,7 +410,7 @@ def generate_dataset_3d(path: str, folders_pati: list, patches_dir: str,
             ptch_im, ptch_lb = generate_patches(imgs, label_id=label_id)
 
             print("Patches per class: ")
-            for p_class in ptch_im.keys():  # Images
+            for p_class, images in ptch_im.items():  # Images
                 print(f"class{p_class} im_ptchs obtained: {len(images)}.")
 
                 if p_class not in n_patches:  # Update n_patches dict

@@ -287,6 +287,10 @@ if __name__ == "__main__":
                              f" (.ini).")
     ini_file = sys.argv[1]
     parser.read(ini_file)
+    if not os.path.exists(ini_file):
+        raise FileNotFoundError(f"The configuration file ({ini_file}) could "
+                                f"not be found. Make sure you provide its full"
+                                f" path.")
 
     workspace_dir = parser['DEFAULT'].get('workspace_dir')
     dataset_name = parser["ENSEMBLE"].get("dataset")
