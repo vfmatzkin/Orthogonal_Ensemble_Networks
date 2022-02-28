@@ -1,8 +1,10 @@
 import os
+import shutil
 import sys
 from configparser import ConfigParser
 from glob import glob
 from random import shuffle
+from datetime import datetime
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
@@ -75,8 +77,17 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
     lrd = parser["TRAIN"].getfloat("learning_rate_decay")
     batch_size = parser["TRAIN"].getint("batch_size")
     epochs = parser["TRAIN"].getint("epochs")
+    resume_if_exists = parser["TRAIN"].getint("resume_if_exists")
     input_channels = parser["TRAIN"].getint("input_channels")
     model_no = 'model_{}'.format(model)
+
+    model_folder = os.path.join(models_directory, dtset_arch)
+    model_path = os.path.join(models_directory, dtset_arch, model_no)
+    already_exists = all([os.path.exists(model_path + end) for end in [".json",
+                                                                       ".h5"]])
+    if already_exists and resume_if_exists:
+        print(f"model {model_path} already exists and won't be overwritten.")
+        return
 
     # out_channels counts the background
     out_channels = parser["TRAIN"].getint("output_channels") if \
@@ -192,20 +203,32 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
     unet.summary()
     optimizer = tf.keras.optimizers.Adam(lr=initial_learning_rate)
 
-    summary_writer = tf.summary.create_file_writer(
-        os.path.join(logs_directory, dtset_arch, model_no))
+    # If there are logs, move them to a backup folder
+    log_folder = os.path.join(logs_directory, dtset_arch, model_no)
+    if os.path.exists(log_folder):
+        old_logs_bckfolder = os.path.join(log_folder, 'oldruns')
+        for file in log_folder:
+            f_path = os.path.join(log_folder, file)
+            created_time = datetime.fromtimestamp(
+                os.path.getctime(f_path)).strftime('%Y%m%d%H%M%S')
+            new_path = os.path.join(old_logs_bckfolder, created_time, file)
+            os.makedirs(new_path, exist_ok=True)
+            shutil.move(f_path, new_path)
 
-    model_folder = os.path.join(models_directory, dtset_arch)
+    summary_writer = tf.summary.create_file_writer(log_folder)
+
     os.makedirs(model_folder, exist_ok=True)
     print(f"Model will be saved in: {model_folder}.")
 
     if ensemble == 'inter-orthogonal':
         reference_weights = list()
-        for i in range(model_n):
+        for i in range(n_models):
             model_ref_name = 'model_' + str(i)
-            model_ref = load_model(
-                os.path.join(models_directory, dtset_arch, model_ref_name))
-            reference_weights.append(model_ref)
+            trained_model_path = os.path.join(models_directory, dtset_arch,
+                                              model_ref_name)
+            if os.path.exists(trained_model_path):
+                model_ref = load_model(trained_model_path)
+                reference_weights.append(model_ref)
 
     best_loss_val_value = None
     best_loss_val_epoch = 0
@@ -243,8 +266,6 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
                 best_loss_val_value = avg_val_loss
 
                 print(f'New best model found. Val loss {best_loss_val_value})')
-                model_path = os.path.join(models_directory, dtset_arch,
-                                          model_no)
                 print(f'Saving model: {model_path}. If it already existed, it '
                       f'was overwrited.')
                 save_model(unet, model_path)
