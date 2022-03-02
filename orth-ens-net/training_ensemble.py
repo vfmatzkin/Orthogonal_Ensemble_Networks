@@ -77,7 +77,7 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
     lrd = parser["TRAIN"].getfloat("learning_rate_decay")
     batch_size = parser["TRAIN"].getint("batch_size")
     epochs = parser["TRAIN"].getint("epochs")
-    resume_if_exists = parser["TRAIN"].getint("resume_if_exists")
+    resume_if_exists = parser["TRAIN"].getboolean("resume_if_exists")
     input_channels = parser["TRAIN"].getint("input_channels")
     model_no = 'model_{}'.format(model)
 
@@ -138,9 +138,8 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
 
         inter_models_error = 0
         if (ensemble == 'inter-orthogonal') and (model_number != 0):
-            for n_model in range(model_number):
-                reference = reference_weights[
-                    n_model].get_layer(kernel_name).weights[0]
+            for reference in reference_weights:
+                reference = reference.get_layer(kernel_name).weights[0]
                 reference = tf.reshape(reference, (kh * kw * kd * i_c, o_c))
                 reference = K.transpose(reference)
                 reference_norm = K.l2_normalize(reference, axis=-1)
@@ -206,14 +205,19 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
     # If there are logs, move them to a backup folder
     log_folder = os.path.join(logs_directory, dtset_arch, model_no)
     if os.path.exists(log_folder):
-        old_logs_bckfolder = os.path.join(log_folder, 'oldruns')
-        for file in log_folder:
-            f_path = os.path.join(log_folder, file)
-            created_time = datetime.fromtimestamp(
-                os.path.getctime(f_path)).strftime('%Y%m%d%H%M%S')
-            new_path = os.path.join(old_logs_bckfolder, created_time, file)
-            os.makedirs(new_path, exist_ok=True)
-            shutil.move(f_path, new_path)
+        new_name = datetime.now().strftime('%Y%m%d%H%M%S') + model_no
+        log_folder = os.path.join(logs_directory, dtset_arch, new_name)
+
+        # Removed because if a Tensorboard session is running, it blocks the
+        # file and can't be moved/removed
+        # old_logs_bckfolder = os.path.join(log_folder, 'oldruns')
+        # for file in log_folder:
+        #     f_path = os.path.join(log_folder, file)
+        #     created_time = datetime.fromtimestamp(
+        #         os.path.getctime(f_path)).strftime('%Y%m%d%H%M%S')
+        #     new_path = os.path.join(old_logs_bckfolder, created_time, file)
+        #     os.makedirs(new_path, exist_ok=True)
+        #     shutil.move(f_path, new_path)
 
     summary_writer = tf.summary.create_file_writer(log_folder)
 
