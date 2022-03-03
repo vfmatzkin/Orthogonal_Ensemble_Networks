@@ -44,7 +44,7 @@ def dice_loss(y_true, y_pred, n_labels):
 
 def build_data_generator(path, batch_size, n_classes=None, classes=None):
     files = glob(os.path.join(path, '*.npz'))
-    print(' Number of files: ', np.shape(files))
+    print(f'----- Number of files: {len(files)} ({1024 * len(files)} patches).')
 
     while True:
         shuffle(files)
@@ -202,22 +202,11 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
     unet.summary()
     optimizer = tf.keras.optimizers.Adam(lr=initial_learning_rate)
 
-    # If there are logs, move them to a backup folder
+    # If there are logs, create the new ones in new folder (avoid plot overlap)
     log_folder = os.path.join(logs_directory, dtset_arch, model_no)
     if os.path.exists(log_folder):
         new_name = datetime.now().strftime('%Y%m%d%H%M%S') + model_no
         log_folder = os.path.join(logs_directory, dtset_arch, new_name)
-
-        # Removed because if a Tensorboard session is running, it blocks the
-        # file and can't be moved/removed
-        # old_logs_bckfolder = os.path.join(log_folder, 'oldruns')
-        # for file in log_folder:
-        #     f_path = os.path.join(log_folder, file)
-        #     created_time = datetime.fromtimestamp(
-        #         os.path.getctime(f_path)).strftime('%Y%m%d%H%M%S')
-        #     new_path = os.path.join(old_logs_bckfolder, created_time, file)
-        #     os.makedirs(new_path, exist_ok=True)
-        #     shutil.move(f_path, new_path)
 
     summary_writer = tf.summary.create_file_writer(log_folder)
 
@@ -234,17 +223,13 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
                 model_ref = load_model(trained_model_path)
                 reference_weights.append(model_ref)
 
-    best_loss_val_value = None
-    best_loss_val_epoch = 0
-
+    best_loss_val_value, best_loss_val_epoch = None, 0  # TODO Nuevo: guardar mejor modelo en val
     for epoch in range(1, epochs):
         print('--- Epoch  ', epoch, ' /', epochs)
-        print("-Phase: Train")
-        cum_inter_orth = list()
-        cum_self_orth = list()
-        cum_rec = list()
-        cum_loss = list()
+        print("---- Phase: Train")
 
+        cum_inter_orth, cum_self_orth = list(), list()
+        cum_rec, cum_loss = list(), list()
         for step in range(steps_per_epoch):
             print('      step  ', step, ' /', steps_per_epoch)
             data = next(train_generator)
@@ -254,44 +239,43 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
             cum_inter_orth.append(inter_orth)
             cum_rec.append(loss_rec)
 
-        if (epoch - 1) % 1 == 0:
-            print("-Phase: Validation")
-            val_loss = list()
-            mean_dice = list()
-            for vfiles in range(val_steps):
-                val_data = next(val_generator)
-                loss, dc = val_on_batch(val_data)
-                val_loss.append(loss)
-                mean_dice.append(dc)
-            avg_val_loss = np.mean(val_loss)
-            if epoch == 1 or (epoch > 1 and
-                              avg_val_loss < best_loss_val_value):
-                best_loss_val_epoch = epoch
-                best_loss_val_value = avg_val_loss
+        print("---- Phase: Validation")
+        val_loss, mean_dice = list(), list()
+        for vfiles in range(val_steps):
+            print('      step  ', vfiles, ' /', val_steps)
+            val_data = next(val_generator)
+            loss, dc = val_on_batch(val_data)
+            val_loss.append(loss)
+            mean_dice.append(dc)
+        avg_val_loss = np.mean(val_loss)
+        if epoch == 1 or (epoch > 1 and
+                          avg_val_loss < best_loss_val_value):
+            best_loss_val_epoch = epoch
+            best_loss_val_value = avg_val_loss
 
-                print(f'New best model found. Val loss {best_loss_val_value})')
-                print(f'Saving model: {model_path}. If it already existed, it '
-                      f'was overwrited.')
-                save_model(unet, model_path)
+            print(f'New best model found. Val loss {best_loss_val_value})')
+            print(f'Saving model: {model_path}. If it already existed, it '
+                  f'was overwritten.')
+            save_model(unet, model_path)
 
-            with summary_writer.as_default():
-                tf.summary.scalar('training/loss', np.mean(cum_loss),
-                                  step=epoch)
-                tf.summary.scalar('training/dice-loss', np.mean(cum_rec),
-                                  step=epoch)
-                tf.summary.scalar('training/inter-orthogonal_loss',
-                                  np.mean(cum_inter_orth), step=epoch)
-                tf.summary.scalar('training/self-orthogonal_loss',
-                                  np.mean(cum_self_orth), step=epoch)
-                tf.summary.scalar('validation/loss', np.mean(val_loss),
-                                  step=epoch)
-                tf.summary.scalar('validation/dice_coefficient: ',
-                                  np.mean(mean_dice), step=epoch)
-                tf.summary.scalar('learning_rate: ',
-                                  optimizer.learning_rate.numpy(), step=epoch)
+        with summary_writer.as_default():
+            tf.summary.scalar('training/loss', np.mean(cum_loss),
+                              step=epoch)
+            tf.summary.scalar('training/dice-loss', np.mean(cum_rec),
+                              step=epoch)
+            tf.summary.scalar('training/inter-orthogonal_loss',
+                              np.mean(cum_inter_orth), step=epoch)
+            tf.summary.scalar('training/self-orthogonal_loss',
+                              np.mean(cum_self_orth), step=epoch)
+            tf.summary.scalar('validation/loss', np.mean(val_loss),
+                              step=epoch)
+            tf.summary.scalar('validation/dice_coefficient: ',
+                              np.mean(mean_dice), step=epoch)
+            tf.summary.scalar('learning_rate: ',
+                              optimizer.learning_rate.numpy(), step=epoch)
 
-            print('Epoch: ', epoch, '  Validation dice coeff: ',
-                  np.mean(mean_dice))
+        print('Epoch: ', epoch, '  Validation dice coeff: ',
+              np.mean(mean_dice))
 
         if epoch % 10 == 0:
             optimizer.learning_rate.assign(optimizer.learning_rate * lrd)

@@ -136,7 +136,8 @@ def load_and_predict_raw_image(subjects, model_n, fold, normalization_fn=None,
         nib.save(nib.Nifti1Image(y_pred, None, header_info), out_pred_path)
         nib.save(nib.Nifti1Image(mask_img, None, header_info), out_mask_path)
         if save_logits:
-            nib.save(nib.Nifti1Image(logits_img, None, header_info), out_logits_path)
+            nib.save(nib.Nifti1Image(logits_img, None, header_info),
+                     out_logits_path)
 
 
 if __name__ == "__main__":
