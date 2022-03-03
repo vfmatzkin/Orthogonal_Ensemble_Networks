@@ -58,7 +58,7 @@ def unpad_pred(y_pred, orig_shape, pd_x, pd_y, pd_z):
 def load_and_predict_raw_image(subjects, model_n, fold, normalization_fn=None,
                                src_dir_path=None, im_types=None,
                                path_structure=None, save_logits=False,
-                               dat_name=None):
+                               dat_name=None, overwrite=False):
     model_path = os.path.join(models_directory, fold, model_n)
     if not os.path.exists(model_path + '.json'):
         print(f"MODEL {model_path} not found. Skipping...")
@@ -67,10 +67,24 @@ def load_and_predict_raw_image(subjects, model_n, fold, normalization_fn=None,
 
     for subject in subjects:
         subject = subject.strip('\n')
+        print('subject: ', subject)
         save_folder = os.path.join(segmentation_directory,
                                    os.path.basename(subject), fold,
                                    model_n)
-        print('subject: ', subject)
+
+        # Images to save - Check if they exist
+        out_pred_path = f"{save_folder}/{dat_name}_prediction.nii.gz"
+        out_mask_path = f"{save_folder}/{dat_name}_mask.nii.gz"
+        out_logits_path = f"{save_folder}/{dat_name}_logits.nii.gz"
+        out_paths = [out_pred_path, out_mask_path] if not save_logits \
+            else [out_pred_path, out_mask_path, out_logits_path]
+        exist = all([os.path.exists(pth) for pth in out_paths])
+        if exist and not overwrite:
+            print(f"Skipping patient because overwrite is disabled and the "
+                  f"out imgs already exist. Run with --overwrite to force.\n"
+                  f"{os.linesep.join(out_paths)}")
+            continue
+
         print('output_folder: ', save_folder)
 
         im_paths = {}  # Paths of the images to load
@@ -119,14 +133,10 @@ def load_and_predict_raw_image(subjects, model_n, fold, normalization_fn=None,
             logits_img = logits.astype(float)[0]
 
         ensure_dir(save_folder)
-        nib.save(nib.Nifti1Image(y_pred, None, header_info),
-                 f"{save_folder}/{dat_name}_prediction.nii.gz")
-
-        nib.save(nib.Nifti1Image(mask_img, None, header_info),
-                 f"{save_folder}/{dat_name}_mask.nii.gz")
+        nib.save(nib.Nifti1Image(y_pred, None, header_info), out_pred_path)
+        nib.save(nib.Nifti1Image(mask_img, None, header_info), out_mask_path)
         if save_logits:
-            nib.save(nib.Nifti1Image(logits_img, None, header_info),
-                     f"{save_folder}/{dat_name}_logits.nii.gz")
+            nib.save(nib.Nifti1Image(logits_img, None, header_info), out_logits_path)
 
 
 if __name__ == "__main__":
@@ -137,6 +147,8 @@ if __name__ == "__main__":
     ini_file = sys.argv[1]
     parser = ConfigParser()
     parser.read(ini_file)
+
+    overwrite = '--overwrite' in sys.argv
 
     workspace_dir = parser['DEFAULT'].get('workspace_dir')
     origin_directory = parser['DEFAULT'].get('image_source_dir').replace(
@@ -170,4 +182,4 @@ if __name__ == "__main__":
             model_name = 'model_{}'.format(i)
             load_and_predict_raw_image(hold_out_images, model_name, model_fold,
                                        normalization, origin_directory, images,
-                                       imgs_paths, logits, name)
+                                       imgs_paths, logits, name, overwrite)
