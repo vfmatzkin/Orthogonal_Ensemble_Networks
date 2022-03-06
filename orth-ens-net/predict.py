@@ -162,6 +162,13 @@ if __name__ == "__main__":
     n_models = parser['ENSEMBLE'].getint('n_models')
     name = parser['ENSEMBLE'].get('dataset')
 
+    out_channels = parser["TRAIN"].getint("output_channels")
+    if 'labels' in parser['TRAIN']:  # labels='1,2,4' --> labels = [1, 2, 4]
+        lab = parser['TRAIN']['labels']
+        labels = list(map(int, lab.split(','))) if ',' in lab else lab
+    else:
+        labels = list(range(out_channels))  # out_ch=3 -> labels = [0,1,2]
+
     images = parser['TEST'].get('images').split(',')
     imgs_paths = parser['TEST'].get('imgs_paths').replace('%workspace',
                                                           workspace_dir)

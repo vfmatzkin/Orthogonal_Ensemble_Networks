@@ -10,6 +10,8 @@ from sklearn.metrics import brier_score_loss
 
 from utils import set2to0, ensure_dir
 
+METRICS = ['dice', 'brier_plus', 'brier', 'variance', 'segment_variance',
+           'save_ensemble_predictions']
 
 def dice_coefficient(gt, prediction):
     return 2 * np.sum(gt * prediction) / (np.sum(gt) + np.sum(prediction))
@@ -128,8 +130,8 @@ def save_ensemble_pred(case_folder, model_fold, subject_id, mfiles):
 
 def testing_models(metrics, model_fold, n_models, folder, save_results_fold):
     for metric in metrics:
-        if metric not in ['dice', 'brier_plus', 'brier']:
-            raise SystemExit("The metric does not exist")
+        if metric not in METRICS:
+            raise SystemExit(f"The metric '{metric}' does not exist")
         header = [metric]
 
         model_mean, model_names = list(), list()
@@ -183,8 +185,8 @@ def testing_models(metrics, model_fold, n_models, folder, save_results_fold):
 def testing_ensemble(Nnet, kcross, metrics, model_fold, n_models, folder,
                      save_results_fold):
     for metric in metrics:
-        if metric not in ['dice', 'brier_plus', 'brier', 'variance']:
-            raise SystemExit("The metric does not exist")
+        if metric not in METRICS:
+            raise SystemExit(f"The metric '{metric}' does not exist")
         header = [metric]
 
         ensemble_mean, model_names = list(), list()

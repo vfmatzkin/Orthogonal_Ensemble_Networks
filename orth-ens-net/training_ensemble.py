@@ -22,7 +22,7 @@ os.chdir(os.path.dirname(os.path.realpath(__file__)))  # Change working dir
 parser = ConfigParser()
 
 
-def dice_coefficient(y_true, y_pred, n_labels):
+def dice_coefficient(y_true, y_pred, n_labels, smooth=1e-7):
     n_labels = 1 if n_labels is None else n_labels
     y_true = K.cast(y_true, "float")
     dice_coef = 0
@@ -34,7 +34,7 @@ def dice_coefficient(y_true, y_pred, n_labels):
         union_ground_truth = tf.reduce_sum(
             (y_true[:, :, :, :, i]) * (y_true[:, :, :, :, i]))
         union = union_ground_truth + union_prediction
-        dice_coef += (2 * intersection / union)
+        dice_coef += (2 * intersection / (union + smooth))
     return dice_coef / n_labels
 
 
@@ -96,7 +96,7 @@ def train_unet(dtset_arch: str, model_n: int, p_selforth: float,
     # In binary problems just analyze background
     out = 1 if out_channels == 2 else out_channels
 
-    if 'labels' in parser['TRAIN']:  # labels='1,2,4' --> labels = [1, 2, 4]
+    if 'labels' in parser['TRAIN']:  # labels='1,2,4' --> labels = [1, 2, 4]  # TODO NUEVO
         lab = parser['TRAIN']['labels']
         labels = list(map(int, lab.split(','))) if ',' in lab else lab
     else:
