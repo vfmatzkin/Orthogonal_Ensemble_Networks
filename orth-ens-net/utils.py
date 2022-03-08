@@ -92,3 +92,55 @@ def one_hot_labels(data, n_labels, labels):
 def set2to0(matrix):
     matrix[matrix > 1.0] = 0.0
     return matrix
+
+
+def comb_probs(prob_img: np.array, combinations: dict, root_path: str,
+               labels: list):
+    """ Combine probabilities according to label combinations.
+
+    This function only combines the images, but it won't save them.
+
+    :param prob_img: 4D image containing probability of each class in the last
+    dimension.
+    :param combinations: Dictionary containing the name of the combination as
+    key and the combined labels as values.
+    :param root_path: Where to save the combined imgs.
+    :param labels: Labels that can be present in the image.
+    :return: dict containing probabilities output paths as keys and combined
+    imgs as values.
+    """
+    combined_imgs = {}
+    for name, labels in combinations.items():
+        result_img = np.zeros(prob_img.shape[:-1])
+        saved_path = root_path + f'_{name}.nii.gz'
+        for label in labels:
+            pos = np.where(np.array(labels) == label)[0][0]
+            result_img += prob_img[:, :, :, pos]
+        combined_imgs[saved_path] = result_img
+    return combined_imgs
+
+
+def or_img_labels(mask_img: np.array, combinations: dict, root_path: str):
+    """ Combine labels using OR according to label combinations dictionary.
+
+    This function only combines the images, but it won't save them.
+
+    :param mask_img: 3D image of the prediction.
+    :param combinations: Dictionary containing the name of the combination as
+    key and the combined labels as values.
+    :param root_path: Where to save the combined imgs.
+    :return: dict containing mask output paths as keys and combined imgs as
+    values.
+    """
+    combined_imgs = {}
+    for name, labels in combinations.items():
+        saved_path = root_path + f'_{name}_mask.nii.gz'
+        if len(labels) == 1:
+            result_img = mask_img == labels[0]
+        else:
+            result_img = np.array(
+                np.logical_or.reduce([mask_img == l for l in labels]),
+                dtype=np.float)
+
+        combined_imgs[saved_path] = result_img
+    return combined_imgs

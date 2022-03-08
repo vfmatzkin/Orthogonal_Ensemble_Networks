@@ -10,7 +10,7 @@ import nibabel as nib
 import numpy as np
 from nibabel import load as load_nii
 from utils import load_model, add_padding_z, add_padding_x, add_padding_y, \
-    ensure_dir
+    ensure_dir, or_img_labels, comb_probs
 import tensorflow.keras.backend as K
 from keras.activations import sigmoid, softmax
 
@@ -75,6 +75,7 @@ def load_and_predict_raw_image(subjects, model_n, fold, normalization_fn=None,
         # Images to save - Check if they exist
         out_pred_path = f"{save_folder}/{dat_name}_prediction.nii.gz"
         out_mask_path = f"{save_folder}/{dat_name}_mask.nii.gz"
+        out_mask_lbl_path = f"{save_folder}/{dat_name}_mask_lbl.nii.gz"
         out_logits_path = f"{save_folder}/{dat_name}_logits.nii.gz"
         out_paths = [out_pred_path, out_mask_path] if not save_logits \
             else [out_pred_path, out_mask_path, out_logits_path]
@@ -132,12 +133,44 @@ def load_and_predict_raw_image(subjects, model_n, fold, normalization_fn=None,
         if save_logits:
             logits_img = logits.astype(float)[0]
 
+        cond_list = [mask_img == i for i in range(out_channels)]
+        y_pred_lbls = np.select(cond_list, labels, mask_img)  # Corrected lbls
+
         ensure_dir(save_folder)
         nib.save(nib.Nifti1Image(y_pred, None, header_info), out_pred_path)
         nib.save(nib.Nifti1Image(mask_img, None, header_info), out_mask_path)
         if save_logits:
             nib.save(nib.Nifti1Image(logits_img, None, header_info),
                      out_logits_path)
+
+        changed_labels = np.any(y_pred != y_pred_lbls)  # Any label has changed
+        if changed_labels:  # If labels are different from the orig img
+            nib.save(nib.Nifti1Image(y_pred_lbls, None, header_info),
+                     out_mask_lbl_path)
+            out_paths = out_paths + [out_mask_lbl_path]
+
+        if combine_labels:  # Save combinations of labels
+            comb_labels = {e.split(':')[0]: e.split(':')[1].split(',') for
+                           e in combine_labels.split(';')}
+            comb_labels = {k: [int(l) for l in lbl] for k, lbl in
+                           comb_labels.items()}
+            if len(comb_labels) == 0:  # Found nothing
+                raise AttributeError(f"combine_labels param is "
+                                     f"{combine_labels} but is expected a str"
+                                     f" like 'ET:1;TC:1,4;WT:1,2,4'. If you "
+                                     f"don't want to combine unset this param")
+            save_path = f"{save_folder}/{dat_name}"
+
+            # Combined probabilities and masks.
+            cmb_probs = comb_probs(y_pred, comb_labels, save_path, labels)
+            cmb_mask = or_img_labels(y_pred_lbls, comb_labels, save_path)
+            cmb_probs.update(cmb_mask)  # Merge dicts
+            for path, img in cmb_probs.items():
+                nib.save(nib.Nifti1Image(img, None, header_info), path)
+                out_paths.append(path)
+
+        print(f"Saved files: {os.linesep + ' '} "
+              f"{(os.linesep + '  ').join(out_paths)}")
 
 
 if __name__ == "__main__":
@@ -165,7 +198,7 @@ if __name__ == "__main__":
     out_channels = parser["TRAIN"].getint("output_channels")
     if 'labels' in parser['TRAIN']:  # labels='1,2,4' --> labels = [1, 2, 4]
         lab = parser['TRAIN']['labels']
-        labels = list(map(int, lab.split(','))) if ',' in lab else lab
+        labels = list(map(int, lab.split(',')))
     else:
         labels = list(range(out_channels))  # out_ch=3 -> labels = [0,1,2]
 
@@ -173,12 +206,17 @@ if __name__ == "__main__":
     imgs_paths = parser['TEST'].get('imgs_paths').replace('%workspace',
                                                           workspace_dir)
 
-    out_channels = parser['TRAIN'].getint('output_channels')
-
     norm = parser['TEST'].get('normalization')
     normalization = NORMALIZATION[norm] if norm in NORMALIZATION else None
 
     logits = parser['TEST'].getboolean('save_logits')
+    combine_labels = None if 'combine_labels' not in parser['TEST'] else \
+        parser['TEST']['combine_labels']
+
+    if combine_labels is not None and 'labels' in parser['TRAIN']:
+        print("WARNING: Taking combine_labels values as the labels in the "
+              f"changed labels file ({labels} and not "
+              f"{list(range(out_channels))}.).")
 
     hold_out_txt = parser['DEFAULT'].get(
         'hold_out_data').replace('%workspace', workspace_dir)
