@@ -82,8 +82,9 @@ def load_and_predict_raw_image(subjects, model_n, fold, normalization_fn=None,
         exist = all([os.path.exists(pth) for pth in out_paths])
         if exist and not overwrite:
             print(f"Skipping patient because overwrite is disabled and the "
-                  f"out imgs already exist. Run with --overwrite to force.\n"
-                  f"{os.linesep.join(out_paths)}")
+                  f"out imgs already exist. Run with --overwrite to force."
+                  f"Found:\n"
+                  f"{os.linesep.join(out_paths)}\n")
             continue
 
         print('output_folder: ', save_folder)

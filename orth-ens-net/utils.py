@@ -136,7 +136,7 @@ def or_img_labels(mask_img: np.array, combinations: dict, root_path: str):
     for name, labels in combinations.items():
         saved_path = root_path + f'_{name}_mask.nii.gz'
         if len(labels) == 1:
-            result_img = mask_img == labels[0]
+            result_img = np.array(mask_img == labels[0], dtype=np.float)
         else:
             result_img = np.array(
                 np.logical_or.reduce([mask_img == l for l in labels]),

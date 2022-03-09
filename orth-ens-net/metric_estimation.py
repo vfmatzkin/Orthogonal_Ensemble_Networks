@@ -13,6 +13,7 @@ from utils import set2to0, ensure_dir
 METRICS = ['dice', 'brier_plus', 'brier', 'variance', 'segment_variance',
            'save_ensemble_predictions']
 
+
 def dice_coefficient(gt, prediction):
     return 2 * np.sum(gt * prediction) / (np.sum(gt) + np.sum(prediction))
 
@@ -89,7 +90,7 @@ def brier_plus(case_folder, subject_id, ensemble=False, mfiles=None):
 def get_ensemble_variance(case_folder, mfiles=None, segment=False):
     ensemble_mean_prob = get_probabilities(case_folder, True, mfiles)
     if segment == True:
-        ensemble_lm  = (ensemble_mean_prob > 0.5).astype(
+        ensemble_lm = (ensemble_mean_prob > 0.5).astype(
             float)
         positive_pixels = (ensemble_lm == 1).astype(float)
     variance_estimation = 0
