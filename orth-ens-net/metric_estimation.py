@@ -89,7 +89,7 @@ def brier_plus(case_folder, subject_id, ensemble=False, mfiles=None):
 
 def get_ensemble_variance(case_folder, mfiles=None, segment=False):
     ensemble_mean_prob = get_probabilities(case_folder, True, mfiles)
-    if segment == True:
+    if segment:
         ensemble_lm = (ensemble_mean_prob > 0.5).astype(
             float)
         positive_pixels = (ensemble_lm == 1).astype(float)
@@ -111,8 +111,8 @@ def get_ensemble_variance(case_folder, mfiles=None, segment=False):
     return variance_estimation / len(mfiles)
 
 
-def ensemble_segmentation(case_folder, M):
-    ensemble_probs = get_probabilities(case_folder, True, M)
+def ensemble_segmentation(case_folder, m):
+    ensemble_probs = get_probabilities(case_folder, True, m)
     ensemble_label_map = (ensemble_probs > 0.5).astype(float)
     return ensemble_label_map
 
@@ -136,7 +136,6 @@ def testing_models(metrics, model_fold, n_models, folder, save_results_fold):
         header = [metric]
 
         model_mean, model_names = list(), list()
-
         for model_number in range(n_models):
             rows, subject_ids = list(), list()
             model_name = f'model_{model_number}'
@@ -183,7 +182,7 @@ def testing_models(metrics, model_fold, n_models, folder, save_results_fold):
         df_means.to_csv(csv_ho)
 
 
-def testing_ensemble(Nnet, kcross, metrics, model_fold, n_models, folder,
+def testing_ensemble(n_net, kcross, metrics, model_fold, n_models, folder,
                      save_results_fold):
     for metric in metrics:
         if metric not in METRICS:
@@ -194,7 +193,7 @@ def testing_ensemble(Nnet, kcross, metrics, model_fold, n_models, folder,
         models_numbers = np.arange(n_models)
         for k in range(kcross):  # 10
             np.random.shuffle(models_numbers)
-            submod_numbrs = models_numbers[0:Nnet]
+            submod_numbrs = models_numbers[0:n_net]
             base_model_name = model_fold + "/model_"
 
             rows, subject_ids = list(), list()
@@ -231,7 +230,7 @@ def testing_ensemble(Nnet, kcross, metrics, model_fold, n_models, folder,
                     save_ensemble_pred(case_folder, model_fold, subject_id,
                                        submod_numbrs)
 
-            model_name = metric + '_ensemble_' + str(Nnet) + '_cross' + str(k)
+            model_name = metric + '_ensemble_' + str(n_net) + '_cross' + str(k)
             model_names.append(model_name)
             ensure_dir(os.path.join('../', save_results_fold, model_fold))
             df = pd.DataFrame.from_records(rows, columns=header,
@@ -243,7 +242,7 @@ def testing_ensemble(Nnet, kcross, metrics, model_fold, n_models, folder,
                                              index=model_names)
         df_means.to_csv(os.path.join('../', save_results_fold, model_fold,
                                      'mean_' + metric + '_ensemble_' + str(
-                                         Nnet) + '.csv'))
+                                         n_net) + '.csv'))
 
 
 if __name__ == "__main__":
@@ -268,7 +267,7 @@ if __name__ == "__main__":
     dataset = parser["ENSEMBLE"].get("dataset")
 
     metrics = parser["TEST"].get("metrics").split(",")
-    Nnets = parser["TEST"].get('Nnet').split(',')
+    Nnets = parser["TEST"].get('n_net').split(',')
     kcross = parser["TEST"].getint('kcross')
     gt_path_structure = parser["TEST"].get('mask_paths')
 
@@ -277,6 +276,6 @@ if __name__ == "__main__":
         'segmentation_directory').replace('%workspace', workspace_dir)
     for fold in model_folds:  # XX_ResUNet_inter-orthogonal_selfp_Y_interp_Z
         testing_models(metrics, fold, n_models, folder, save_results_fold)
-        for Nnet in Nnets:  # Nnet: 3,5  -  kcross:10
+        for Nnet in Nnets:  # ensemble_size: 3,5  -  kcross:10
             testing_ensemble(int(Nnet), kcross, metrics, fold, n_models,
                              folder, save_results_fold)

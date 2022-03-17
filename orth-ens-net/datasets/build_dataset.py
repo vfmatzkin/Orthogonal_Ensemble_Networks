@@ -59,7 +59,7 @@ class Dataset:
     """ Dataset class used per storing used file/folder paths
 
     :param name: Dataset name. Must be one of the ones listed in DATASET_NAMES
-    :param origin_dir: Soruce folder (contains subfolders with the images
+    :param origin_dir: Source folder (contains subfolders with the images
     inside).
     :param patches_dir: Output folder (it can be inside the source folder).
     """
