@@ -150,24 +150,19 @@ def ensemble_segmentation(case_folder, m):
     return ensemble_label_map
 
 
-def save_ensemble_pred(case_folder, model_fold, subject_id, mfiles):
-    """  Save the ensemble predictions (used for visualization purposes only)
+def save_ensemble_pred(prob_image, mask_image, gt_image, k, ensemble_size,
+                       subject_id, root_folder, inp_size):
+    ens_name = f'ensemble_{ensemble_size}_cross{k}'
+    preds_folder = os.path.join(root_folder, ens_name, subject_id)
+    ensure_dir(preds_folder)
 
-    :param case_folder:
-    :param model_fold:
-    :param subject_id:
-    :param mfiles:
-    :return:
-    """
-    probs = get_probabilities(case_folder, True, mfiles)
+    prob_path = os.path.join(preds_folder, f'{dataset}_prediction.nii.gz')
+    mask_path = os.path.join(preds_folder, f'{dataset}_mask.nii.gz')
+    gt_path = os.path.join(preds_folder, f'{dataset}_gt.nii.gz')
 
-    ens_pred_folder = f"./ensemble_preds/{subject_id}/{model_fold}"
-    ensure_dir(ens_pred_folder)
-    nib.save(nib.Nifti1Image(probs, None),
-             f"{ens_pred_folder}/ensemble_{dataset}.nii.gz")
-
-    mask_img = nib.Nifti1Image((probs > 0.5).astype(float), None)
-    nib.save(mask_img, f"{ens_pred_folder}/wmh_mask.nii.gz")
+    nib.save(nib.Nifti1Image(prob_image.reshape(inp_size), None), prob_path)
+    nib.save(nib.Nifti1Image(mask_image.reshape(inp_size), None), mask_path)
+    nib.save(nib.Nifti1Image(gt_image.reshape(inp_size), None), gt_path)
 
 
 def load_image(path: str, labels: list = None) -> np.ndarray:
@@ -205,25 +200,29 @@ def test_models(metrics: list, model_fold: str, n_models: int,
     patient.
     :param out_metrics_folder: Path of the output folder for the metrics.
     """
-
+    print("Testing models")
     # Folder where the csv files will be saved
     csv_folder = os.path.join(out_metrics_folder, model_fold, 'models')
     ensure_dir(csv_folder)
 
+    print(f"Metrics to test: {', '.join(metrics)}.")
     for metric in metrics:  # dice, brier
         if metric not in METRIC_FN:
             raise SystemExit(f"The metric '{metric}' does not exist")
         header = [metric]
+        print(f"\nMetric: {metric}.\n")
 
         model_mean, model_names = list(), list()
         for model_number in range(n_models):  # From model 0 to model 10
+            print(f"Model {model_number}/{n_models}:")
             rows, subject_ids = list(), list()
             model_name = f'model_{model_number}'
             model_names.append(model_name)
 
+            print("  subjects: ", end='')
             for pred_subject in glob(predictions_folder + '/*'):  # Pred folder
-                print(f"base folder: {pred_subject}")
                 subject_id = os.path.basename(pred_subject)
+                print(f"{subject_id}", end=' ')
                 subject_ids.append(subject_id)
 
                 preds_folder = os.path.join(segmentation_directory, subject_id,
@@ -251,19 +250,20 @@ def test_models(metrics: list, model_fold: str, n_models: int,
             subjects_data_fname = metric + f'_model_{model_number}.csv'
             subjects_data_fpath = os.path.join(csv_folder, subjects_data_fname)
             subjects_model.to_csv(subjects_data_fpath)
-            print(f"saved {subjects_data_fpath}.")
+            print(f"\n  saved {subjects_data_fpath}.")
 
-            metrics_mean = subjects_model.mean()
-            model_mean.append(metrics_mean)
-            print(f"mean {metrics_mean}.")
+            model_mean.append(subjects_model.mean())
+            print(f"  mean {float(model_mean[-1])}.")
         models_means = pd.DataFrame.from_records(model_mean, columns=header,
                                                  index=model_names)
         mean_metric_per_model = os.path.join(csv_folder,
                                              'mean_' + metric + '_model.csv')
         models_means.to_csv(mean_metric_per_model)
+        print(f"  means saved in {mean_metric_per_model}")
 
 
-def load_ensemble_images(ens_models_paths: list, flatten=True) -> tuple:
+def load_ensemble_images(ens_models_paths: list, flatten=True,
+                         get_size=False) -> tuple:
     """ Load ensemble images
 
     Given a list of paths of the models corresponding to an ensemble, merge the
@@ -272,6 +272,8 @@ def load_ensemble_images(ens_models_paths: list, flatten=True) -> tuple:
     :param ens_models_paths: List containing the paths corresponding to the
     ensemble.
     :param flatten: Flatten the images before returning them.
+    :param get_size: Return also the input image size (useful when saving ensem
+    ble predictions).
     :return: (mask_image, prob_image) merged mask and probability images, as a
     tuple.
     """
@@ -282,9 +284,12 @@ def load_ensemble_images(ens_models_paths: list, flatten=True) -> tuple:
         prob_imgs.append(load_image(prob_path))
         mask_imgs.append(load_image(mask_path))
     prob_img = np.around(np.mean(prob_imgs, axis=0), 4)
-    mask_img = np.array(np.mean(prob_imgs) > 0.5, dtype=prob_img.dtype)
+    mask_img = np.array(np.mean(prob_imgs) > 0.5, dtype=prob_img.dtype)  # TODO THIS IS NOT IN THE ORIG SIZE
+    inp_size = prob_img.shape if get_size else None
     if flatten:
         mask_img, prob_img = mask_img.flatten(), prob_img.flatten()
+    if get_size:
+        return mask_img, prob_img, inp_size
     return mask_img, prob_img
 
 
@@ -304,44 +309,54 @@ def test_ensembles(ensemble_size: int, k_cross: int, metrics: str,
     :param out_metrics_folder: Path of the output folder for the metrics.
     :return:
     """
-    for metric in metrics:
-        if metric not in METRIC_FN:
-            raise SystemExit(f"The metric '{metric}' does not exist")
-        header = [metric]
+    # Folder where the csv files will be saved
+    print("Testing ensembles")
+    csv_folder = os.path.join(out_metrics_folder, model_fold, 'ensembles')
+    ensure_dir(csv_folder)
 
-        # Folder where the csv files will be saved
-        csv_folder = os.path.join(out_metrics_folder, model_fold, 'ensembles')
-        ensure_dir(csv_folder)
+    print(f"Metrics to test: {', '.join(metrics)}.")
+    print(f"{k_cross} ensembles of size {ensemble_size} will be formed ("
+          f"{n_models} models available).")
+    ens_means, model_names = [], []
+    models_numbers = np.arange(n_models)
+    for k in range(k_cross):
+        print(f"\nEnsemble {k}/{k_cross} (size={ensemble_size})")
+        np.random.shuffle(models_numbers)
+        submod_numbrs = models_numbers[0:ensemble_size]
 
-        ens_means, model_names = [], []
-        models_numbers = np.arange(n_models)
-        for k in range(k_cross):
-            np.random.shuffle(models_numbers)
-            submod_numbrs = models_numbers[0:ensemble_size]
-
+        for metric in metrics:
+            if metric not in METRIC_FN:
+                raise SystemExit(f"The metric '{metric}' does not exist")
+            header = [metric]
+            print(f"Metric: {metric}.")
             rows, subject_ids = list(), list()
-            for base_case_folder in glob(predictions_folder + '/*'):
-                subject_id = os.path.basename(base_case_folder)
+
+            print("  subjects: ", end='')
+            for pred_subject in glob(predictions_folder + '/*'):
+                subject_id = os.path.basename(pred_subject)
+                print(f"{subject_id}", end=' ')
                 subject_ids.append(subject_id)
 
                 preds_folder = os.path.join(segmentation_directory, subject_id,
                                             fold)
-                ens_models_paths = [os.path.join(preds_folder, 'model_', m) for
-                                    m in submod_numbrs]
+                ens_models_paths = [os.path.join(preds_folder, f'model_{m}')
+                                    for m in submod_numbrs]
                 gt_path = gt_path_str.replace('%subject', subject_id)
 
                 # Load the mask and prediction of the ensemble & the GT
-                mask_image, prob_image = load_ensemble_images(ens_models_paths,
-                                                              flatten=True)
+                mask_image, prob_image, inp_size = load_ensemble_images(
+                    ens_models_paths, flatten=True, get_size=True)
                 gt_image = load_image(gt_path, labels).flatten()
+
+                if metric == metrics[-1] and save_ensemble_preds:  # Last mtric
+                    save_ensemble_pred(prob_image, mask_image, gt_image, k,
+                                       ensemble_size, subject_id, csv_folder,
+                                       inp_size)
 
                 result = [METRIC_FN[metric](gt=gt_image, mask=mask_image,
                                             prob=prob_image)]
 
                 rows.append(result)
-
-            if save_ensemble_preds:  # TODO This will save the last ensemble
-                save_ensemble_pred(metric, ensemble_size, k)  # TODO Check params & output dir
 
             model_file_name = f'{metric}_ensemble_{ensemble_size}_cross{k}.csv'
             model_names.append(os.path.splitext(model_file_name)[0])
@@ -349,16 +364,20 @@ def test_ensembles(ensemble_size: int, k_cross: int, metrics: str,
             # Dataframe contains metric for each subj that particular ensemble
             metr_ens_sub = pd.DataFrame.from_records(rows, subject_ids,
                                                      columns=header)
-            metr_ens_sub.to_csv(os.path.join(csv_folder, model_file_name))
+            ens_sub_fpath = os.path.join(csv_folder, model_file_name)
+            metr_ens_sub.to_csv(ens_sub_fpath)
+            print(f"\n  saved {ens_sub_fpath}.")
             ens_means.append(metr_ens_sub.mean())  # Save mean
+            print(f"  mean {float(ens_means[-1])}.")
 
-        # Dataframe contains means for each ensemble
-        met_ens_mean = pd.DataFrame.from_records(ens_means, model_names,
-                                                 columns=header)
-        met_ens_mean_fname = f'{metric}_ensemble_{ensemble_size}_cross{k}.csv'
-        met_ens_mean_fpath = os.path.join(csv_folder, met_ens_mean_fname)
+    # Dataframe contains means for each ensemble
+    met_ens_mean = pd.DataFrame.from_records(ens_means, model_names,
+                                             columns=header)
+    met_ens_mean_fname = f'{metric}_ensemble_{ensemble_size}_cross{k}.csv'
+    met_ens_mean_fpath = os.path.join(csv_folder, met_ens_mean_fname)
 
-        met_ens_mean.to_csv(met_ens_mean_fpath)
+    met_ens_mean.to_csv(met_ens_mean_fpath)
+    print(f"  means saved in {met_ens_mean_fpath}")
 
 
 if __name__ == "__main__":
@@ -369,6 +388,11 @@ if __name__ == "__main__":
     ini_file = sys.argv[1]
     parser = ConfigParser()
     parser.read(ini_file)
+
+    if not os.path.exists(ini_file):
+        raise FileNotFoundError(f"The configuration file ({ini_file}) could "
+                                f"not be found. Make sure you provide its full"
+                                f" path.")
 
     workspace_dir = parser['DEFAULT'].get('workspace_dir')
     gt_directory = parser["DEFAULT"].get('image_source_dir').replace(
@@ -390,7 +414,7 @@ if __name__ == "__main__":
         labels = list(range(out_channels))  # out_ch=3 -> labels = [0,1,2]
 
     metrics = parser["TEST"].get("metrics").split(",")
-    ensemble_sizes = parser["TEST"].get('n_net').split(',')
+    ensemble_sizes = parser["TEST"].get('Nnet').split(',')
     k_cross = parser["TEST"].getint('kcross')
 
     gt_path_str = parser["TEST"].get('mask_paths')
@@ -403,7 +427,7 @@ if __name__ == "__main__":
     segmentation_directory = parser['DEFAULT'].get(
         'segmentation_directory').replace('%workspace', workspace_dir)
     for fold in model_folds:  # XX_ResUNet_inter-orthogonal_selfp_Y_interp_Z
-        test_models(metrics, fold, n_models, preds_folder, out_metrics_folder)
+        # test_models(metrics, fold, n_models, preds_folder, out_metrics_folder)
         for ensemble_size in ensemble_sizes:  # n_net: 3,5  -  kcross:10
             test_ensembles(int(ensemble_size), k_cross, metrics, fold,
                            n_models, preds_folder, out_metrics_folder)
