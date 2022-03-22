@@ -1,6 +1,7 @@
 import json
 import math
 import os
+from typing import Union
 
 import nibabel as nib
 import numpy as np
@@ -112,7 +113,7 @@ def comb_probs(prob_img: np.array, combinations: dict, root_path: str,
     combined_imgs = {}
     for name, labels in combinations.items():
         result_img = np.zeros(prob_img.shape[:-1])
-        saved_path = root_path + f'_{name}.nii.gz'
+        saved_path = root_path + f'_{name}_prediction.nii.gz'
         for label in labels:
             pos = np.where(np.array(labels) == label)[0][0]
             result_img += prob_img[:, :, :, pos]
@@ -120,7 +121,8 @@ def comb_probs(prob_img: np.array, combinations: dict, root_path: str,
     return combined_imgs
 
 
-def or_img_labels(mask_img: np.array, combinations: dict, root_path: str):
+def or_img_labels(mask_img: np.array, combinations: dict, root_path: str = '',
+                  one_img: bool = False) -> Union[dict, np.ndarray]:
     """ Combine labels using OR according to label combinations dictionary.
 
     This function only combines the images, but it won't save them.
@@ -129,12 +131,14 @@ def or_img_labels(mask_img: np.array, combinations: dict, root_path: str):
     :param combinations: Dictionary containing the name of the combination as
     key and the combined labels as values.
     :param root_path: Where to save the combined imgs.
+    :param one_img: Can be set to True if there is only one combination, so
+    no dictionary will be returned but a single image with this result.
     :return: dict containing mask output paths as keys and combined imgs as
-    values.
+    values, or the only combined img got if one_img=True.
     """
     combined_imgs = {}
     for name, labels in combinations.items():
-        saved_path = root_path + f'_{name}_mask.nii.gz'
+        saved_path = root_path + f'_{name}_mask.nii.gz' if not one_img else 'i'
         if len(labels) == 1:
             result_img = np.array(mask_img == labels[0], dtype=np.float)
         else:
@@ -143,4 +147,7 @@ def or_img_labels(mask_img: np.array, combinations: dict, root_path: str):
                 dtype=np.float)
 
         combined_imgs[saved_path] = result_img
-    return combined_imgs
+    if not one_img:
+        return combined_imgs  # return dict
+    else:
+        return combined_imgs['i']  # return only image
