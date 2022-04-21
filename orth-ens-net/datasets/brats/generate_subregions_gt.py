@@ -1,3 +1,5 @@
+# Not used anymore.
+
 import os.path
 import sys
 from configparser import ConfigParser

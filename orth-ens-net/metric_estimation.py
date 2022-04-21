@@ -197,6 +197,7 @@ def load_image(path: str, labels: list = None) -> np.ndarray:
 def test_models(metrics: list, model_fold: str, n_models: int,
                 predictions_folder: str, out_metrics_folder: str,
                 dataset: str):
+    print("Testing models")
     """ Calculate metrics on holdout split for all the models of a fold.
 
     Given a trained fold, calculate the requested metrics for all the trained
@@ -212,14 +213,9 @@ def test_models(metrics: list, model_fold: str, n_models: int,
     :param dataset: Name of the dataset (may contain the combined labels
     suffix).
     """
-    print("Testing models")
     # Folder where the csv files will be saved
-    if len(datasets) > 1:
-        csv_folder = os.path.join(out_metrics_folder, model_fold, dataset,
-                                  'models')
-    else:
-        csv_folder = os.path.join(out_metrics_folder, model_fold, 'models')
-
+    csv_folder = os.path.join(out_metrics_folder, model_fold, dataset,
+                              'models')
     ensure_dir(csv_folder)
     if not overwrite and len(os.listdir(csv_folder)):
         print(f"{csv_folder} already contains files. Run metric_estimation "
@@ -334,11 +330,8 @@ def test_ensembles(ensemble_size: int, k_cross: int, metrics: str,
     """
     # Folder where the csv files will be saved
     print("Testing ensembles")
-    if len(datasets) > 1:
-        csv_folder = os.path.join(out_metrics_folder, model_fold, dataset,
-                                  'models')
-    else:
-        csv_folder = os.path.join(out_metrics_folder, model_fold, 'ensembles')
+    csv_folder = os.path.join(out_metrics_folder, model_fold, dataset,
+                              'ensembles')
     ensure_dir(csv_folder)
 
     if not overwrite and len(os.listdir(csv_folder)):
