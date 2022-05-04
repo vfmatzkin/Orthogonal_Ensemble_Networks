@@ -13,6 +13,8 @@ from utils import load_model, add_padding_z, add_padding_x, add_padding_y, \
     ensure_dir, or_img_labels, comb_probs
 import tensorflow.keras.backend as K
 from keras.activations import sigmoid, softmax
+import torchio as tio
+import torch
 
 
 def z_scores_normalization(img):
@@ -34,7 +36,7 @@ def pad_if_necessary(imgs_np, factor):
             pd_y = (math.ceil(img_np.shape[1] / factor) * factor)
             imgs_np[i] = add_padding_y(imgs_np[i], pd_y)
         if (img_np.shape[2] % factor) != 0:
-            pd_z = (math.ceil(img_np.shape[0] / factor) * factor)
+            pd_z = (math.ceil(img_np.shape[2] / factor) * factor)
             imgs_np[i] = add_padding_z(imgs_np[i], pd_z)
     return imgs_np, pd_x, pd_y, pd_z
 
@@ -55,15 +57,36 @@ def unpad_pred(y_pred, orig_shape, pd_x, pd_y, pd_z):
     return y_pred
 
 
+def predict_tio(model, all_modalities_joined, patch_size=128, patch_overlap=4):
+    tio_image = tio.ScalarImage(tensor=np.moveaxis(all_modalities_joined[0], -1, 0))
+    subject = tio.Subject(image=tio_image)
+
+    sampler = tio.inference.GridSampler(subject, patch_size, patch_overlap, padding_mode=0)
+    aggregator = tio.inference.GridAggregator(sampler, overlap_mode='average')
+    for i, patch in enumerate(sampler):
+        input_tensor = patch['image'][tio.DATA]
+        locations = patch[tio.LOCATION].unsqueeze(0)  # Add batch dimension
+        expanded_patch = np.expand_dims(np.moveaxis(input_tensor.numpy(), 0, 3), axis=0)
+        logits_keras = model.predict(expanded_patch, batch_size=1)
+        logits_pt = torch.tensor(logits_keras).permute(0, 4, 1, 2, 3)
+        aggregator.add_batch(logits_pt, locations)
+    output_tensor = aggregator.get_output_tensor()
+    return np.expand_dims(output_tensor.permute(1, 2, 3, 0).numpy(), 0)
+
+
 def load_and_predict_raw_image(subjects, model_n, fold, normalization_fn=None,
                                src_dir_path=None, im_types=None,
                                path_structure=None, save_logits=False,
-                               dat_name=None, overwrite=False):
+                               dat_name=None, overwrite=False,
+                               patch_based=False):
     model_path = os.path.join(models_directory, fold, model_n)
     if not os.path.exists(model_path + '.json'):
         print(f"MODEL {model_path} not found. Skipping...")
         return
     model = load_model(model_path)
+
+    if patch_based:
+        print("Using patch based inference.")
 
     for subject in subjects:
         subject = subject.strip('\n')
@@ -111,13 +134,19 @@ def load_and_predict_raw_image(subjects, model_n, fold, normalization_fn=None,
         if normalization_fn:
             imgs_np = [normalization_fn(im) for im in imgs_np]
 
-        imgs_np, pd_x, pd_y, pd_z = pad_if_necessary(imgs_np, 16)
+        # If patch based, the patch size cannot be bigger than any image
+        # dimension, so the image size should be padded by the LCM of 16 & PS.
+        multiple_of = 16 if not patch_based else np.lcm(16, patch_size)
+        imgs_np, pd_x, pd_y, pd_z = pad_if_necessary(imgs_np, multiple_of)
 
         all_modalities_joined = np.stack(imgs_np).astype(np.float32)
         all_modalities_joined = np.moveaxis(all_modalities_joined, 0, -1)
         all_modalities_joined = np.expand_dims(all_modalities_joined, 0)
 
-        logits = model.predict(all_modalities_joined, batch_size=1)
+        if not patch_based:  # Use whole image
+            logits = model.predict(all_modalities_joined, batch_size=1)
+        else:  # Use torchio patch based inference
+            logits = predict_tio(model, all_modalities_joined, patch_size)
 
         activation = sigmoid if out_channels == 2 else softmax
         y_pred = activation(K.constant(logits)).numpy()
@@ -219,6 +248,11 @@ if __name__ == "__main__":
               f"changed labels file ({labels} and not "
               f"{list(range(out_channels))}.).")
 
+    patch_based = False if 'patch_based' not in parser['TEST'] else \
+        parser['TEST'].getboolean('patch_based')
+    patch_size = parser['TEST'].getint('patch_size') \
+        if 'patch_size' in parser['TEST'] else 128
+
     hold_out_txt = parser['DEFAULT'].get(
         'hold_out_data').replace('%workspace', workspace_dir)
     hold_out_file = open(hold_out_txt, "r")
@@ -229,4 +263,5 @@ if __name__ == "__main__":
             model_name = 'model_{}'.format(i)
             load_and_predict_raw_image(hold_out_images, model_name, model_fold,
                                        normalization, origin_directory, images,
-                                       imgs_paths, logits, name, overwrite)
+                                       imgs_paths, logits, name, overwrite,
+                                       patch_based)
